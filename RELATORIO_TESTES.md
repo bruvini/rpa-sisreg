@@ -1,9 +1,17 @@
-# Validação técnica v0.4
+# Relatório técnico — RPA SISREG v0.5
 
-**Resultado local:** `53 tests / OK`. Composição: testes anteriores do fluxo v0.3, regras de CNS destacado, caráter, autorizador, códigos de procedimento, gravação segura no XLSX, divergências, AIH duplicada e AIH exata em linha variável. A interface Tkinter foi instanciada com display virtual e as três abas abriram.
+Execução local em 19/10/2026, com dados sintéticos. **Não houve acesso ao SISREG de produção**.
 
-**O que NÃO foi comprovado:** login oficial com credenciais reais; operação dentro da rede da SMS; presença estável dos XPaths de resultados e de ficha; interpretação da tabela do SISREG autenticado; build Windows do GitHub Actions. Essas verificações são mandatórias na homologação.
+| Ensaio | Resultado |
+|---|---|
+| Regressão antiga + novas regras, sem interface gráfica | 65 testes descobertos, 62 executados e aprovados, 3 opcionais ignorados |
+| Testes Tkinter com Xvfb (bloqueio de etapas, cartão de conclusão, backup) | 65 descobertos, 64 executados e aprovados, 1 opcional ignorado |
+| Teste HTML de CNS em Chromium real (página sintética local) | 65 descobertos, 63 executados e aprovados, 2 de interface ignorados |
+| CPF pesquisado já não visível na página; nome e CNS destacados | Aprovado na simulação |
+| CPF explícito e divergente, nome divergente ou múltiplos CNS | Bloqueio de gravação aprovado |
+| Tempo manual fixo de 15 segundos por AIH | Aprovado |
+| Exposição da aba 2 antes de preparar e aba 3 antes de concluir a etapa 2 | Bloqueio testado |
+| Captura de CNS em páginas autenticadas reais do SISREG | **PENDENTE DE HOMOLOGAÇÃO** |
+| Geração do EXE Windows no GitHub Actions | **PENDENTE DE VERIFICAÇÃO DO WORKFLOW** |
 
-**Riscos tratados:** sem escolha arbitrária de primeira solicitação; arquivo XLSX atualizado somente com evidência; dado conflitante preservado; backup da fonte; saída sem senha; não modificar o SISREG; não registrar HTML ou dados de pacientes nos testes; campo inexistente não é inferido.
-
-**Critérios mínimos para homologação:** testar um CNS encontrado, um CPF sem cadastro, uma AIH com duas solicitações, uma AIH não localizada, uma divergência de procedimento, um código autorizador com zeros iniciais, uma alteração externa da planilha, e 5 AIHs em sequência. Inspecionar manualmente células F/G e colunas M:O.
+Cuidado: os testes sintéticos validam o código e DOM fictício, não a acurácia em SISREG real nem os controles de acesso concedidos ao operador. O XLSX com dados reais fornecido na conversa foi inspecionado localmente e **não** foi incorporado ao pacote ou a repositórios.

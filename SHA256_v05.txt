@@ -1,0 +1,7 @@
+RPA SISREG v0.5 — hashes SHA-256 (fontes não sensíveis)
+56b1906ffa753c5e993d3a58630455ef7a3b335498cd7b65c90150edde3a87ba  src/sisreg_login.py
+7d13d244768af99b89cabb061d8fad6d5792bd1c6fd7028944c39261375cf5dd  src/sisreg_navigation.py
+3370d313448163b1809a79c919ecf640f832eecf831b45be1f3a86ff99233e0c  tests/test_interface_cns_v05.py
+903eb70307dd2387fc26de38ca18f90297afc0db4fb8203cdd45cd1e588687d7  README.md
+490ea861e0abe44521bb0b0f07a0fb121fd58c2f9226ba64bd5e901d1383ec12  CHANGELOG.md
+d696e93ce4f69d683fe5aaaad2db8f08cb77798fe57a3a867bba06945bbbd756  RELATORIO_TESTES.md

@@ -34,7 +34,8 @@ XPATH_USUARIO = "/html/body/div[1]/div/div[4]/form/div/div[1]/div[1]/div[2]/inpu
 XPATH_SENHA = "/html/body/div[1]/div/div[4]/form/div/div[1]/div[1]/div[5]/input"
 XPATH_ENTRAR = "/html/body/div[1]/div/div[4]/form/div/div[1]/div[1]/div[8]/input"
 
-VERSAO = "0.4.0 — preparação, cadastro e solicitações hospitalares em lote"
+VERSAO = "0.5.0 — preparação, CNS em lote e auditoria hospitalar"
+MANUAL_SEGUNDOS_POR_AIH = 15
 AZUL = "#063c68"
 FUNDO = "#f2f6fa"
 
@@ -115,7 +116,7 @@ class Aplicativo:
 
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
-        root.title('RPA SISREG · Conferência em lote — v0.4')
+        root.title('RPA SISREG · Conferência em lote — v0.5')
         root.geometry('1080x750')
         root.minsize(900,640)
         root.configure(bg=FUNDO)
@@ -136,10 +137,12 @@ class Aplicativo:
         self.usuario=tk.StringVar()
         self.senha=tk.StringVar()
         self.navegador=tk.StringVar(value='Google Chrome')
-        self.login_confirmado=tk.BooleanVar(value=False)
-        self.limite=tk.StringVar(value='20')
-        self.limite_hospital=tk.StringVar(value='5')
-        self.manual_por_aih=tk.StringVar(value='60')
+        self.preparo_concluido=False
+        self.cadastro_concluido=False
+        self.motivos_cadastro={}
+        self.atividade_preparo=tk.StringVar(value='Aguardando início.')
+        self.resultado_titulo=tk.StringVar(value='')
+        self.resultado_descritivo=tk.StringVar(value='')
         self.cronometro=tk.StringVar(value='Tempo: 00:00')
         self.inicio_preparo=None
         self.tipo_lote='cadastro'
@@ -148,6 +151,9 @@ class Aplicativo:
         self.progresso=tk.StringVar(value='Aguardando preparação.')
         self.dados_atuais={'cpf':0,'cns':0,'pendentes':0,'falhas':0,'total':0}
         self._montar()
+        self.abas.tab(1,state='disabled')
+        self.abas.tab(2,state='disabled')
+        self.btn_lote.configure(state='disabled')
         root.after(140,self._ler_eventos)
 
     def _montar(self):
@@ -163,7 +169,7 @@ class Aplicativo:
         topo=tk.Frame(self.root,bg=AZUL,height=77);topo.pack(fill='x');topo.pack_propagate(False)
         tk.Label(topo,text='RPA SISREG  |  Conferência em lote',bg=AZUL,fg='white',
                  font=('Segoe UI',17,'bold')).pack(anchor='w',padx=24,pady=(10,0))
-        tk.Label(topo,text='v0.4 · CPF, CNS e solicitação hospitalar · atualiza XLSX com backup',
+        tk.Label(topo,text='v0.5 · CPF, CNS e solicitação hospitalar · atualiza XLSX com backup',
                  bg=AZUL,fg='#d4e8f7',font=('Segoe UI',10)).pack(anchor='w',padx=24)
         corpo=ttk.Frame(self.root,padding=13);corpo.pack(fill='both',expand=True)
         self.abas=ttk.Notebook(corpo);self.abas.pack(fill='both',expand=True)
@@ -192,10 +198,15 @@ class Aplicativo:
                                     command=self._preparar,style='Acao.TButton')
         self.btn_preparar.pack(side='left')
         ttk.Label(fprep,textvariable=self.cronometro,font=('Segoe UI',11,'bold')).pack(side='left',padx=(12,8))
-        ttk.Label(fprep,text='Tempo manual por AIH (s):').pack(side='left',padx=(8,4))
-        ttk.Entry(fprep,textvariable=self.manual_por_aih,width=6).pack(side='left',padx=(0,8))
-        ttk.Label(a,textvariable=self.resumo,wraplength=960).pack(anchor='w',pady=(0,8))
+        self.lbl_atividade=ttk.Label(fprep,textvariable=self.atividade_preparo,wraplength=450)
+        self.lbl_atividade.pack(side='left',padx=(11,0))
+        self.cartao_resultado=tk.Frame(a,bg='#e9f5ed',highlightbackground='#9ccdaf',highlightthickness=1)
+        tk.Label(self.cartao_resultado,textvariable=self.resultado_titulo,bg='#e9f5ed',fg='#175d39',
+                 font=('Segoe UI',11,'bold')).pack(anchor='w',padx=12,pady=(9,2))
+        tk.Label(self.cartao_resultado,textvariable=self.resultado_descritivo,bg='#e9f5ed',fg='#204937',
+                 font=('Segoe UI',10),wraplength=955,justify='left').pack(anchor='w',padx=12,pady=(0,10))
         grade=ttk.Frame(a);grade.pack(fill='both',expand=True)
+        self.grade=grade
         cfg=[('aba','Aba',130),('linha','Linha',52),('aih','AIH',122),('paciente','Paciente',240),
              ('cpf','CPF',109),('cns','CNS',140),('situacao','Situação',260)]
         self.tabela=ttk.Treeview(grade,columns=[x[0] for x in cfg],show='headings')
@@ -220,21 +231,20 @@ class Aplicativo:
         fc.columnconfigure(0,weight=2);fc.columnconfigure(1,weight=2);fc.columnconfigure(2,weight=1)
         self.btn_login=ttk.Button(b,text='Abrir SISREG e entrar',style='Acao.TButton',command=self._iniciar_login)
         self.btn_login.pack(anchor='w',pady=(0,7))
-        ttk.Checkbutton(b,text='Confirmei visualmente o acesso no SISREG',
-                        variable=self.login_confirmado).pack(anchor='w')
-        ttk.Separator(b,orient='horizontal').pack(fill='x',pady=12)
+        ttk.Label(b,text='A pesquisa começa automaticamente após o SISREG apresentar o menu de usuário autenticado.',
+                  wraplength=920).pack(anchor='w',pady=(0,6))
+        ttk.Separator(b,orient='horizontal').pack(fill='x',pady=10)
         fexec=ttk.Frame(b);fexec.pack(fill='x')
-        ttk.Label(fexec,text='Tamanho do lote:').pack(side='left')
-        ttk.Combobox(fexec,textvariable=self.limite,state='readonly',width=14,
-                     values=['5','20','50','Todos']).pack(side='left',padx=10)
-        self.btn_lote=ttk.Button(fexec,text='Iniciar pesquisa dos CNS em lote',
-                                 style='Acao.TButton',command=self._iniciar_lote)
+        self.btn_lote=ttk.Button(fexec,text='Retomar CPFs pendentes',
+                                 command=self._iniciar_lote)
         self.btn_lote.pack(side='left',padx=(0,8))
         self.btn_pausa=ttk.Button(fexec,text='Pausar',command=self._pausar)
         self.btn_pausa.pack(side='left',padx=(0,8))
         ttk.Button(fexec,text='Tentar salvar',command=self._tentar_salvar).pack(side='left',padx=(0,8))
         ttk.Button(fexec,text='Interromper',command=self._interromper).pack(side='left')
-        ttk.Label(b,textvariable=self.progresso,font=('Segoe UI',12,'bold')).pack(anchor='w',pady=(22,10))
+        ttk.Label(b,textvariable=self.progresso,font=('Segoe UI',12,'bold')).pack(anchor='w',pady=(16,8))
+        self.diagnostico_cns=tk.StringVar(value='O motivo das pendências será mostrado aqui após as consultas.')
+        ttk.Label(b,textvariable=self.diagnostico_cns,wraplength=930).pack(anchor='w',pady=(0,8))
         self.barra=ttk.Progressbar(b,mode='determinate',maximum=100,value=0)
         self.barra.pack(fill='x')
         ttk.Label(b,text='O RPA pesquisa CPF por CPF. Só grava CNS quando o resultado mostra nome '
@@ -251,9 +261,6 @@ class Aplicativo:
                   'identificação inequívoca; procedimento divergente fica sinalizado para revisão.',
                   wraplength=920).pack(anchor='w',pady=(0,12))
         hf=ttk.Frame(c);hf.pack(fill='x')
-        ttk.Label(hf,text='Tamanho do lote:').pack(side='left')
-        ttk.Combobox(hf,textvariable=self.limite_hospital,state='readonly',width=12,
-                     values=['5','20','50','Todos']).pack(side='left',padx=(9,12))
         self.btn_hospital=ttk.Button(hf,text='Pesquisar solicitações hospitalares em lote',
                   style='Acao.TButton',command=self._iniciar_hospital)
         self.btn_hospital.pack(side='left',padx=(0,10))
@@ -263,8 +270,8 @@ class Aplicativo:
         ttk.Label(c,textvariable=self.progresso_hospital,font=('Segoe UI',11,'bold')).pack(anchor='w',pady=(18,9))
         self.barra_hospital=ttk.Progressbar(c,mode='determinate',maximum=100,value=0)
         self.barra_hospital.pack(fill='x')
-        ttk.Label(c,text='O tempo medido é real. A estimativa de esforço manual usa a premissa '
-                  'editável da etapa 1 e não comprova economia de trabalho. Não são alteradas '
+        ttk.Label(c,text='O tempo medido é real. A estimativa manual usa 15 segundos por AIH como premissa fixa '
+                  'e não comprova economia de trabalho. Não são alteradas '
                   'solicitações no SISREG. Feche o Excel durante os lotes.',wraplength=920).pack(anchor='w',pady=(14,0))
         rodape=ttk.Frame(corpo);rodape.pack(fill='x',pady=(10,0))
         ttk.Label(rodape,textvariable=self.status,wraplength=910).pack(side='left',fill='x',expand=True)
@@ -273,20 +280,36 @@ class Aplicativo:
     def _escolher_xlsx(self):
         arq=filedialog.askopenfilename(title='Planilha-padrão',filetypes=[('Excel','*.xlsx')])
         if arq:
+            self._invalidar_preparo()
             self.arquivo_planilha=Path(arq)
             self.lbl_xlsx.configure(text=self.arquivo_planilha.name)
     def _escolher_pdf(self):
         arq=filedialog.askopenfilename(title='Espelho de AIH',filetypes=[('PDF','*.pdf')])
         if arq:
+            self._invalidar_preparo()
             self.arquivo_pdf=Path(arq)
             self.lbl_pdf.configure(text=self.arquivo_pdf.name)
+
+    def _invalidar_preparo(self):
+        if self.carregando or self.processando:
+            return
+        self.preparo_concluido=False
+        self.cadastro_concluido=False
+        self.abas.tab(1,state='disabled')
+        self.abas.tab(2,state='disabled')
+        self.cartao_resultado.pack_forget()
+        self.atividade_preparo.set('Arquivos alterados: execute a conferência novamente.')
 
     def _preparar(self):
         if self.carregando or self.processando:return
         if not self.arquivo_planilha:
             self.status.set('Selecione o XLSX hospitalar.');return
+        self.preparo_concluido=False;self.cadastro_concluido=False
+        self.abas.tab(1,state='disabled');self.abas.tab(2,state='disabled')
+        self.cartao_resultado.pack_forget()
         self.carregando=True;self.inicio_preparo=time.perf_counter();self._atualizar_relogio();self.btn_preparar.configure(state='disabled')
-        self.status.set('Indexando PDF e preparando atualização com backup...')
+        self.atividade_preparo.set('Lendo planilha, indexando PDF e criando backup...')
+        self.status.set('Conferência em andamento. Não abra o Excel.')
         def tarefa():
             try:
                 sessao=SessaoPlanilha()
@@ -322,6 +345,8 @@ class Aplicativo:
             self.tabela.insert('','end',iid=str(i),values=(r.aba,r.linha,r.aih,r.nome,r.cpf,r.cns,r.situacao))
 
     def _iniciar_login(self):
+        if not self.preparo_concluido or self.carregando:
+            self.status.set('Conclua a etapa 1 antes de acessar o SISREG.');return
         if self.thread_navegador and self.thread_navegador.is_alive():
             self.status.set('Já há um navegador ativo.');return
         u=self.usuario.get().strip();s=self.senha.get()
@@ -329,7 +354,7 @@ class Aplicativo:
             self.status.set('Preencha usuário e senha para abrir o SISREG.');return
         canal='chrome' if self.navegador.get()=='Google Chrome' else 'msedge'
         self.usuario.set('');self.senha.set('');self.parar.clear()
-        self.browser_ready=False;self.login_confirmado.set(False)
+        self.browser_ready=False;self.cadastro_concluido=False
         self.thread_navegador=threading.Thread(target=self._navegador_worker,args=(u,s,canal),daemon=True)
         self.thread_navegador.start();self.status.set('Abrindo SISREG...')
 
@@ -345,8 +370,10 @@ class Aplicativo:
                     submeter_login(pagina,usuario,senha)
                     self.eventos.put(('login_enviado',None))
                     # Detecção pós-login sem enviar segundo login; qualquer verificação manual mantém-se possível.
-                    if autenticao_ativa(pagina,timeout=14000):
+                    if autenticao_ativa(pagina,timeout=45000):
                         self.eventos.put(('autenticado',None))
+                    else:
+                        self.eventos.put(('erro_login','O menu autenticado não apareceu no prazo. Consulte o navegador; não iniciamos pesquisas.'))
                 except Exception:
                     self.eventos.put(('erro_login','Login ou acesso indisponível. Verifique a página no navegador.'))
                 finally:
@@ -385,6 +412,7 @@ class Aplicativo:
                     indices=payload
                     self.eventos.put(('lote_iniciado',len(indices)))
                     erros_seguidos=0
+                    processados=0
                     for j,idx in enumerate(indices,1):
                         if self.parar.is_set():break
                         while self.pausa.is_set() and not self.parar.wait(0.25):pass
@@ -404,12 +432,13 @@ class Aplicativo:
                             erros_seguidos+=1
                             self.eventos.put(('diagnostico_navegacao',type(exc).__name__ + ': ' + str(exc)[:180]))
                         self.eventos.put(('lote_item',(idx,cns,motivo,j,len(indices))))
+                        processados=j
                         if erros_seguidos>=3:
                             self.eventos.put(('lote_alerta','Três falhas consecutivas de navegação. Lote suspenso para verificar tela/seletores.'))
                             break
                         # Intervalo deliberado para não sobrecarregar o sistema público.
                         self.parar.wait(1.8)
-                    self.eventos.put(('lote_fim',len(indices)))
+                    self.eventos.put(('lote_fim',(processados,len(indices))))
         except Exception:
             self.eventos.put(('erro_login','Não foi possível iniciar o navegador autorizado.'))
         finally:
@@ -421,20 +450,24 @@ class Aplicativo:
     def _iniciar_lote(self):
         if self.processando:
             self.status.set('Já há um lote em execução.');return
-        if not self.sessao.origem:
-            self.status.set('Prepare a planilha e o PDF antes.');return
-        if not self.thread_navegador or not self.thread_navegador.is_alive() or not self.login_confirmado.get():
-            self.status.set('Faça login e confirme o acesso antes de pesquisar pacientes.');return
+        if not self.preparo_concluido or not self.sessao.origem:
+            self.status.set('Conclua a conferência da etapa 1 primeiro.');return
+        if not self.thread_navegador or not self.thread_navegador.is_alive() or not self.browser_ready:
+            self.status.set('Aguarde o reconhecimento do login pelo SISREG.');return
         from aih_extract import cpf_valido
         selecionados=[i for i,r in enumerate(self.sessao.registros) if cpf_valido(r.cpf)
-                     and r.aih and r.nome and not r.cns and not r.situacao.startswith('PENDENTE_')
+                     and r.aih and r.nome and not r.cns
                      and r.situacao not in ('CPF_CONFLITANTE_PDF','ESPELHOS_CONFLITANTES','NOME_DIVERGENTE_ESPELHO')]
         if not selecionados:
-            self.status.set('Não há CPF pendente elegível neste lote.');return
-        numero=self.limite.get()
-        if numero!='Todos':selecionados=selecionados[:int(numero)]
+            self.status.set('Nenhum CPF elegível pendente. Etapa 2 concluída.')
+            self.cadastro_concluido=True
+            self.abas.tab(2,state='normal')
+            return
         self.tipo_lote='cadastro';self.processando=True;self.persistencia_falhou=False;self.navegacao_falhou=False;self.pausa.clear();self.parar.clear()
+        self.cadastro_concluido=False
+        self.abas.tab(2,state='disabled')
         self.dados_atuais={'cpf':0,'cns':0,'pendentes':0,'falhas':0,'total':len(selecionados)}
+        self.motivos_cadastro={}
         self.barra.configure(value=0)
         self.btn_lote.configure(state='disabled')
         self.comandos.put(('lote',selecionados))
@@ -442,15 +475,14 @@ class Aplicativo:
     def _iniciar_hospital(self):
         if self.processando:
             self.status.set('Outro lote em execução; aguarde sua conclusão.');return
-        if not self.sessao.origem or not self.thread_navegador or not self.thread_navegador.is_alive() or not self.login_confirmado.get():
-            self.status.set('Prepare a planilha e autentique-se no SISREG antes da etapa 3.');return
+        if not self.preparo_concluido or not self.cadastro_concluido or not self.thread_navegador or not self.thread_navegador.is_alive() or not self.browser_ready:
+            self.status.set('Aguarde o fim das etapas 1 e 2 antes da consulta hospitalar.');return
         candidatos=[i for i,r in enumerate(self.sessao.registros) if cns_formato(r.cns)
                     and r.aih and r.nome and r.consulta_hospitalar not in
                     ('FICHA_CONFERIDA','PROCEDIMENTO_DIVERGENTE')
                     and not r.situacao.startswith(('CNS_CONFLITO','CPF_CONFLITANTE','ESPELHOS_CONFLITANTES'))]
         if not candidatos:
             self.status.set('Não há solicitações hospitalares pendentes elegíveis com CNS na planilha.');return
-        if self.limite_hospital.get()!='Todos':candidatos=candidatos[:int(self.limite_hospital.get())]
         self.tipo_lote='hospital';self.processando=True
         self.persistencia_falhou=False;self.navegacao_falhou=False
         self.parar.clear();self.pausa.clear()
@@ -494,25 +526,28 @@ class Aplicativo:
                     self.sessao=sessao
                     self._atualizar_tabela()
                     self.cronometro.set('Tempo: '+self._duracao(segundos))
-                    try:
-                        base=float(self.manual_por_aih.get().replace(',','.'))
-                        premissa=(f' · Manual estimado: {self._duracao(len(sessao.registros)*base)} '
-                                  f'({base:g}s/AIH, premissa editável)') if 0<base<=3600 else ''
-                    except ValueError:premissa=''
-                    self.resumo.set(f'{len(sessao.registros)} registros · {informacao} · '
-                                    f'{atualizacao["cpf"]} CPF(s) gravados · '
-                                    f'RPA: {self._duracao(segundos)}{premissa}')
-                    self.status.set('Planilha original atualizada, com backup. Etapa 2 liberada.')
+                    manual=len(sessao.registros)*MANUAL_SEGUNDOS_POR_AIH
+                    self.resultado_titulo.set(f'✓ Conferência concluída — {len(sessao.registros)} AIHs em {self._duracao(segundos)}')
+                    self.resultado_descritivo.set(
+                        f'{atualizacao["cpf"]} CPF(s) gravados · {informacao}  |  '
+                        f'Manual estimado: {self._duracao(manual)} (15 s/AIH, hipótese fixa). '
+                        f'Diferença estimada: {self._duracao(max(0,manual-segundos))}. Backup criado/preservado.')
+                    self.cartao_resultado.pack(fill='x',pady=(0,8),before=self.grade)
+                    self.atividade_preparo.set('Concluído. Arquivo hospitalar atualizado.')
+                    self.preparo_concluido=True
+                    self.abas.tab(1,state='normal')
+                    self.status.set('Etapa 1 concluída. Agora pode acessar o SISREG.')
                     self.carregando=False;self.btn_preparar.configure(state='normal')
                 elif evento=='erro_preparo':
                     self.carregando=False;self.btn_preparar.configure(state='normal')
+                    self.atividade_preparo.set('Falha na preparação; verifique o erro e tente novamente.')
                     self.status.set('Preparação não concluída: '+str(dado))
                 elif evento=='login_enviado':
-                    self.browser_ready=True
-                    self.status.set('Login enviado; confirme visualmente o acesso no navegador.')
+                    self.status.set('Login enviado; aguardando o menu autenticado para iniciar o lote automaticamente.')
                 elif evento=='autenticado':
-                    self.browser_ready=True;self.login_confirmado.set(True)
-                    self.status.set('Menu pós-login identificado. Você pode iniciar o lote SISREG.')
+                    self.browser_ready=True
+                    self.status.set('Acesso identificado. Iniciando automaticamente a pesquisa de todos os CPFs elegíveis...')
+                    self._iniciar_lote()
                 elif evento=='hospital_iniciado':
                     self.progresso_hospital.set(f'Iniciando {dado} consultas hospitalares...')
                 elif evento=='hospital_item':
@@ -543,6 +578,7 @@ class Aplicativo:
                     idx,cns,motivo,contador,total=dado
                     reg=self.sessao.registros[idx]
                     self.sessao.registrar_cadastro_em_lote(reg,cns,motivo)
+                    self.motivos_cadastro[motivo]=self.motivos_cadastro.get(motivo,0)+1
                     if reg.situacao=='CNS_CONFIRMADO_SISREG':self.dados_atuais['cns']+=1
                     else:self.dados_atuais['pendentes']+=1
                     if motivo=='FALHA_DE_NAVEGACAO_OU_TEMPO':self.dados_atuais['falhas']+=1
@@ -553,17 +589,26 @@ class Aplicativo:
                         self.tabela.item(str(idx),values=(reg.aba,reg.linha,reg.aih,reg.nome,reg.cpf,reg.cns,reg.situacao))
                     self.barra.configure(value=100*contador/max(total,1))
                     self.progresso.set(f'{contador}/{total} consultados · '
-                                      f'{self.dados_atuais["cns"]} CNS seguros · '
+                                      f'{self.dados_atuais["cns"]} CNS identificados · '
                                       f'{self.dados_atuais["pendentes"]} pendências')
+                    pendencias=sorted(((n,m) for m,n in self.motivos_cadastro.items()
+                                       if not m.startswith('CNS_CONFIRMADO')),reverse=True)
+                    self.diagnostico_cns.set('Pendências por motivo: '+
+                        ('; '.join(f'{m}: {n}' for n,m in pendencias[:3]) if pendencias else 'nenhuma até agora'))
                 elif evento=='lote_fim':
+                    processados,previstos=dado
                     self._salvar_checkpoint()
                     self.processando=False;self.btn_lote.configure(state='normal')
-                    if not self.persistencia_falhou and not self.navegacao_falhou:
-                        self.status.set('Lote encerrado; atualizações gravadas na planilha hospitalar.')
+                    if not self.persistencia_falhou and not self.navegacao_falhou and processados==previstos and not self.parar.is_set():
+                        self.cadastro_concluido=True
+                        self.abas.tab(2,state='normal')
+                        self.status.set('Etapa 2 concluída: dados gravados na planilha. Etapa 3 liberada.')
                     elif self.navegacao_falhou and not self.persistencia_falhou:
-                        self.status.set('Lote pausado após falhas consecutivas do SISREG. Dados anteriores gravados. Revise a navegação.')
+                        self.status.set('Lote suspenso por falhas consecutivas do SISREG. Salvos os dados já obtidos; use Retomar quando disponível.')
+                    elif self.persistencia_falhou:
+                        self.status.set('LOTE INTERROMPIDO: falha ao salvar. Feche o Excel e tente salvar novamente.')
                     else:
-                        self.status.set('LOTE INTERROMPIDO: falha ao salvar. Feche o Excel, tente salvar novamente e confirme.')
+                        self.status.set(f'Lote interrompido após {processados}/{previstos} consultas. A etapa 3 permanece bloqueada.')
                 elif evento=='lote_alerta':
                     self.navegacao_falhou=True
                     self.status.set(str(dado))
@@ -571,7 +616,7 @@ class Aplicativo:
                     self.status.set('Pesquisa SISREG pendente: '+str(dado))
                 elif evento=='erro_login':self.status.set(str(dado))
                 elif evento=='navegador_parou':
-                    self.browser_ready=False;self.login_confirmado.set(False)
+                    self.browser_ready=False
                     if self.processando:
                         self._salvar_checkpoint()
                         self.processando=False;self.btn_lote.configure(state='normal')

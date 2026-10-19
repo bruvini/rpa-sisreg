@@ -137,8 +137,15 @@ def avaliar_resultado_cadastro(texto, nome_esperado, cpf_esperado):
 
 def ler_resultado_cadastro(pagina, nome_esperado, cpf_esperado, espera=10000):
     """Inspeciona texto visível após a busca (nunca marca cadastro como inexistente)."""
-    fim=time.monotonic()+espera/1000
-    ultimo='RESULTADO_NAO_COMPROVADO'
+    # O SISREG exibe o CNS como TD > FONT > B, sem necessariamente ter
+    # "CNS:" como texto ou manter o CPF no formulário após pesquisar.
+    numero, motivo = ler_cns_negrito_pagina(
+        pagina, nome_esperado, cpf_esperado, espera=min(4500,espera),
+        consulta_efetuada=True)
+    if numero:
+        return numero, motivo
+    fim=time.monotonic()+max(1200,espera-4500)/1000
+    ultimo=motivo or 'RESULTADO_NAO_COMPROVADO'
     while time.monotonic()<fim:
         for frame in getattr(pagina,'frames',[pagina]):
             try:
@@ -180,7 +187,7 @@ def ler_resultado_cadastro(pagina, nome_esperado, cpf_esperado, espera=10000):
                 continue
         time.sleep(0.35)
     # Compatibilidade com o HTML real: CNS em TD colspan=2 > FONT size=3 > B.
-    numero, motivo = ler_cns_negrito_pagina(pagina, nome_esperado, cpf_esperado, espera=1400)
+    numero, motivo = ler_cns_negrito_pagina(pagina, nome_esperado, cpf_esperado, espera=1800, consulta_efetuada=True)
     if numero:
         return numero, motivo
     return None, ultimo if ultimo != 'RESULTADO_NAO_COMPROVADO' else motivo
@@ -202,26 +209,47 @@ def consultar_solicitacoes_amb(pagina,cns):
 
 
 def avaliar_cadastro_com_cns_em_negrito(texto_visivel, numeros_destacados, nome_esperado,
-                                          cpf_esperado, cpf_consultado):
+                                          cpf_esperado, cpf_consultado, consulta_efetuada=False):
     """Validação adicional para o TD <font size=3><b>CNS</b> do SISREG.
 
     Exige CPF ainda preenchido na pesquisa, nome completo visível na página e
     somente um CNS na região de resultado. Números soltos nunca são usados.
     """
     cpf = digitos(cpf_esperado)
-    if not cpf or cpf != digitos(cpf_consultado):
+    pesquisado = digitos(cpf_consultado)
+    if not cpf or (pesquisado and cpf != pesquisado):
+        return None, 'CPF_PESQUISADO_NAO_CONFIRMADO'
+    if not pesquisado and not consulta_efetuada:
         return None, 'CPF_PESQUISADO_NAO_CONFIRMADO'
     nome = normalizar_nome(nome_esperado)
-    exibido = normalizar_nome(texto_visivel)
-    if not nome or not re.search(r'(?<!\w)' + re.escape(nome) + r'(?!\w)', exibido):
+    texto = normalizar_nome(texto_visivel)
+    if not nome or not re.search(r'(?<!\w)' + re.escape(nome) + r'(?!\w)', texto):
         return None, 'NOME_NAO_CONFIRMADO_RESULTADO'
+    # Se existir CPF explicitamente apresentado no resultado, não aceitar
+    # documento de outro paciente nem vários CPFs distintos.
+    vistos = {digitos(x) for x in re.findall(
+        r'(?im)\bCPF\s*[:：]\s*([0-9.\- ]{11,18})', texto_visivel or '')}
+    vistos.discard('')
+    if vistos and vistos != {cpf}:
+        return None, 'CPF_DIVERGENTE_CADASTRO'
+    # Um nome de paciente diferente em campo explicitamente rotulado é conflito.
+    nomes_rotulados = [normalizar_nome(x) for x in re.findall(
+        r'(?im)^\s*(?:nome(?:\s+(?:do|da)\s+paciente)?|paciente)\s*:\s*([^\r\n]+)',
+        texto_visivel or '')]
+    if nomes_rotulados and any(n != nome for n in nomes_rotulados):
+        return None, 'NOME_DIVERGENTE_RESULTADO'
     ns = {digitos(x) for x in numeros_destacados if cns_formato(digitos(x))}
     if len(ns) != 1:
         return None, 'CNS_DESTACADO_AMBIGUO_OU_AUSENTE'
-    return next(iter(ns)), 'CNS_CONFIRMADO_TD_NEGRITO'
+    # A busca foi efetuada para o CPF validado e o resultado contém o nome
+    # completo esperado e um único CNS destacado. Na ausência do CPF textual,
+    # usar procedência da consulta, mas registrar uma justificativa distinta.
+    motivo = ('CNS_CONFIRMADO_TD_NEGRITO' if pesquisado or vistos
+              else 'CNS_CONFIRMADO_NOME_E_PESQUISA_CPF')
+    return next(iter(ns)), motivo
 
 
-def ler_cns_negrito_pagina(pagina, nome_esperado, cpf_esperado, espera=8500):
+def ler_cns_negrito_pagina(pagina, nome_esperado, cpf_esperado, espera=3200, consulta_efetuada=True):
     """Examina apenas TDs destacadas e o CPF da busca, sem salvar HTML localmente."""
     fim = time.monotonic() + espera / 1000
     ultima = 'CNS_NAO_IDENTIFICADO_DOM'
@@ -230,17 +258,27 @@ def ler_cns_negrito_pagina(pagina, nome_esperado, cpf_esperado, espera=8500):
             try:
                 if getattr(frame, 'url', '') not in ('', 'about:blank'):
                     origem_autorizada(frame)
-                instantaneo = frame.evaluate("""() => ({
-                  texto: document.body?.innerText || '',
-                  numeros: [...document.querySelectorAll('td[colspan="2"] font[size="3"] b')]
-                    .filter(x => !!x.getClientRects().length)
-                    .map(x => (x.textContent || '').trim()),
-                  cpfPesquisa: (() => {
-                    const e = document.querySelector('input[name="cpf"],input[id="cpf"],input[name="nu_cpf"]');
-                    if (e && e.getClientRects().length) return e.value || '';
-                    return '';
-                  })()
-                })""")
+                instantaneo = frame.evaluate(r"""() => {
+                  // Valores em INPUT não constam em innerText, mesmo quando a
+                  // tela apresenta o nome somente em campo readonly.
+                  const campos = [...document.querySelectorAll('input,textarea')]
+                    .filter(e => e.getClientRects().length && e.value && e.type !== 'password' && e.type !== 'hidden')
+                    .map(e => {
+                      const rotulo = ((e.getAttribute('aria-label') || '') + ' ' +
+                        (e.getAttribute('name') || '') + ' ' + (e.id || '')).toLowerCase();
+                      if (/nome|paciente/.test(rotulo)) return 'Nome: ' + String(e.value).trim();
+                      if (/cpf/.test(rotulo)) return 'CPF: ' + String(e.value).trim();
+                      return '';
+                    }).filter(Boolean);
+                  const doc = document.querySelector('input[name="cpf"],input[id="cpf"],input[name="nu_cpf"]');
+                  return {
+                    texto: (document.body?.innerText || '') + '\n' + campos.join('\n'),
+                    numeros: [...document.querySelectorAll('td[colspan="2"] font[size="3"] b')]
+                      .filter(e => !!e.getClientRects().length)
+                      .map(e => (e.textContent || '').trim()),
+                    cpfPesquisa: (doc && doc.getClientRects().length) ? (doc.value || '') : ''
+                  };
+                }""")
                 # O formulário pode não usar name/id cpf: então conferir que a caixa
                 # que já foi usada na busca mantém exatamente o CPF pesquisado.
                 cpf_pesquisa = instantaneo.get('cpfPesquisa', '')
@@ -253,7 +291,7 @@ def ler_cns_negrito_pagina(pagina, nome_esperado, cpf_esperado, espera=8500):
                         pass
                 numero, motivo = avaliar_cadastro_com_cns_em_negrito(
                     instantaneo.get('texto',''), instantaneo.get('numeros', []),
-                    nome_esperado, cpf_esperado, cpf_pesquisa)
+                    nome_esperado, cpf_esperado, cpf_pesquisa, consulta_efetuada=consulta_efetuada)
                 if numero:
                     return numero, motivo
                 ultima = motivo
