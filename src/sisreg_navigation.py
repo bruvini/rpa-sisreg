@@ -148,7 +148,7 @@ def ler_resultado_cadastro(pagina, nome_esperado, cpf_esperado, espera=10000):
                 # Campos de resultado podem aparecer em <input readonly>; innerText
                 # sozinho não os enxerga. Leitura SOMENTE de etiquetas identificáveis.
                 try:
-                    adicionais=frame.evaluate("""() => {
+                    adicionais=frame.evaluate(r"""() => {
                       const nomes = /^(?:nome(?:\s+(?:do|da)\s+paciente)?|paciente)$/i;
                       const docs = /^(?:cns|cpf|cart[aã]o\s+nacional\s+de\s+sa[uú]de)$/i;
                       const resultado = [];
@@ -179,7 +179,11 @@ def ler_resultado_cadastro(pagina, nome_esperado, cpf_esperado, espera=10000):
             except Exception:
                 continue
         time.sleep(0.35)
-    return None,ultimo
+    # Compatibilidade com o HTML real: CNS em TD colspan=2 > FONT size=3 > B.
+    numero, motivo = ler_cns_negrito_pagina(pagina, nome_esperado, cpf_esperado, espera=1400)
+    if numero:
+        return numero, motivo
+    return None, ultimo if ultimo != 'RESULTADO_NAO_COMPROVADO' else motivo
 
 
 def consultar_solicitacoes_amb(pagina,cns):
@@ -195,3 +199,65 @@ def consultar_solicitacoes_amb(pagina,cns):
     origem_autorizada(pagina)
     caixa.fill(cns,timeout=7000)
     botao.click(timeout=10000,no_wait_after=True)
+
+
+def avaliar_cadastro_com_cns_em_negrito(texto_visivel, numeros_destacados, nome_esperado,
+                                          cpf_esperado, cpf_consultado):
+    """Validação adicional para o TD <font size=3><b>CNS</b> do SISREG.
+
+    Exige CPF ainda preenchido na pesquisa, nome completo visível na página e
+    somente um CNS na região de resultado. Números soltos nunca são usados.
+    """
+    cpf = digitos(cpf_esperado)
+    if not cpf or cpf != digitos(cpf_consultado):
+        return None, 'CPF_PESQUISADO_NAO_CONFIRMADO'
+    nome = normalizar_nome(nome_esperado)
+    exibido = normalizar_nome(texto_visivel)
+    if not nome or not re.search(r'(?<!\w)' + re.escape(nome) + r'(?!\w)', exibido):
+        return None, 'NOME_NAO_CONFIRMADO_RESULTADO'
+    ns = {digitos(x) for x in numeros_destacados if cns_formato(digitos(x))}
+    if len(ns) != 1:
+        return None, 'CNS_DESTACADO_AMBIGUO_OU_AUSENTE'
+    return next(iter(ns)), 'CNS_CONFIRMADO_TD_NEGRITO'
+
+
+def ler_cns_negrito_pagina(pagina, nome_esperado, cpf_esperado, espera=8500):
+    """Examina apenas TDs destacadas e o CPF da busca, sem salvar HTML localmente."""
+    fim = time.monotonic() + espera / 1000
+    ultima = 'CNS_NAO_IDENTIFICADO_DOM'
+    while time.monotonic() < fim:
+        for frame in getattr(pagina, 'frames', [pagina]):
+            try:
+                if getattr(frame, 'url', '') not in ('', 'about:blank'):
+                    origem_autorizada(frame)
+                instantaneo = frame.evaluate("""() => ({
+                  texto: document.body?.innerText || '',
+                  numeros: [...document.querySelectorAll('td[colspan="2"] font[size="3"] b')]
+                    .filter(x => !!x.getClientRects().length)
+                    .map(x => (x.textContent || '').trim()),
+                  cpfPesquisa: (() => {
+                    const e = document.querySelector('input[name="cpf"],input[id="cpf"],input[name="nu_cpf"]');
+                    if (e && e.getClientRects().length) return e.value || '';
+                    return '';
+                  })()
+                })""")
+                # O formulário pode não usar name/id cpf: então conferir que a caixa
+                # que já foi usada na busca mantém exatamente o CPF pesquisado.
+                cpf_pesquisa = instantaneo.get('cpfPesquisa', '')
+                if not cpf_pesquisa:
+                    try:
+                        campo = frame.locator('xpath=' + PACIENTE_BUSCA)
+                        if campo.count() == 1 and campo.is_visible():
+                            cpf_pesquisa = campo.input_value(timeout=2000)
+                    except Exception:
+                        pass
+                numero, motivo = avaliar_cadastro_com_cns_em_negrito(
+                    instantaneo.get('texto',''), instantaneo.get('numeros', []),
+                    nome_esperado, cpf_esperado, cpf_pesquisa)
+                if numero:
+                    return numero, motivo
+                ultima = motivo
+            except Exception:
+                continue
+        time.sleep(.3)
+    return None, ultima

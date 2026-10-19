@@ -1,8 +1,7 @@
-"""SISREG III — protótipo institucional de autenticação assistida.
+"""SISREG III — automação autorizada de consultas em três etapas.
 
-Este protótipo apenas abre o navegador, preenche as credenciais introduzidas
-pela própria pessoa operadora e submete o formulário identificado.
-Não consulta prontuários, não coleta dados de pacientes e não salva senhas.
+Lê PDF/XLSX localmente, busca CNS e dados da solicitação hospitalar no SISREG.
+Não altera solicitações e não salva senha. Dados só são gravados na XLSX local.
 
 USO CONDICIONADO À AUTORIZAÇÃO DA REGULAÇÃO/TI.
 """
@@ -10,6 +9,7 @@ USO CONDICIONADO À AUTORIZAÇÃO DA REGULAÇÃO/TI.
 from __future__ import annotations
 
 import queue
+import time
 import os
 from pathlib import Path
 from tkinter import filedialog
@@ -17,7 +17,8 @@ from datetime import datetime
 from sisreg_navigation import (consultar_cadastro, ler_resultado_cadastro, autenticao_ativa, NavegacaoInesperada)
 from aih_extract import ler_espelhos_pdf, cpf_valido, cns_formato
 from planilha import SessaoPlanilha
-from sisreg_navigation import consultar_cadastro, consultar_solicitacoes_amb, NavegacaoInesperada
+from sisreg_navigation import NavegacaoInesperada
+from sisreg_hospital import consultar_solicitacao_hospitalar, ResultadoHospital
 import threading
 import tkinter as tk
 from tkinter import ttk
@@ -33,7 +34,7 @@ XPATH_USUARIO = "/html/body/div[1]/div/div[4]/form/div/div[1]/div[1]/div[2]/inpu
 XPATH_SENHA = "/html/body/div[1]/div/div[4]/form/div/div[1]/div[1]/div[5]/input"
 XPATH_ENTRAR = "/html/body/div[1]/div/div[4]/form/div/div[1]/div[1]/div[8]/input"
 
-VERSAO = "0.3.0 — processamento em lote da planilha e CPF/CNS"
+VERSAO = "0.4.0 — preparação, cadastro e solicitações hospitalares em lote"
 AZUL = "#063c68"
 FUNDO = "#f2f6fa"
 
@@ -114,7 +115,7 @@ class Aplicativo:
 
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
-        root.title('RPA SISREG · Conferência em lote — v0.3')
+        root.title('RPA SISREG · Conferência em lote — v0.4')
         root.geometry('1080x750')
         root.minsize(900,640)
         root.configure(bg=FUNDO)
@@ -137,6 +138,11 @@ class Aplicativo:
         self.navegador=tk.StringVar(value='Google Chrome')
         self.login_confirmado=tk.BooleanVar(value=False)
         self.limite=tk.StringVar(value='20')
+        self.limite_hospital=tk.StringVar(value='5')
+        self.manual_por_aih=tk.StringVar(value='60')
+        self.cronometro=tk.StringVar(value='Tempo: 00:00')
+        self.inicio_preparo=None
+        self.tipo_lote='cadastro'
         self.status=tk.StringVar(value='Selecione a planilha-padrão e o espelho PDF do hospital.')
         self.resumo=tk.StringVar(value='Nenhuma conferência carregada.')
         self.progresso=tk.StringVar(value='Aguardando preparação.')
@@ -157,27 +163,38 @@ class Aplicativo:
         topo=tk.Frame(self.root,bg=AZUL,height=77);topo.pack(fill='x');topo.pack_propagate(False)
         tk.Label(topo,text='RPA SISREG  |  Conferência em lote',bg=AZUL,fg='white',
                  font=('Segoe UI',17,'bold')).pack(anchor='w',padx=24,pady=(10,0))
-        tk.Label(topo,text='v0.3 · Planilha hospitalar atualizada com backup · SISREG somente leitura',
+        tk.Label(topo,text='v0.4 · CPF, CNS e solicitação hospitalar · atualiza XLSX com backup',
                  bg=AZUL,fg='#d4e8f7',font=('Segoe UI',10)).pack(anchor='w',padx=24)
         corpo=ttk.Frame(self.root,padding=13);corpo.pack(fill='both',expand=True)
         self.abas=ttk.Notebook(corpo);self.abas.pack(fill='both',expand=True)
         a=ttk.Frame(self.abas,padding=12);b=ttk.Frame(self.abas,padding=12);c=ttk.Frame(self.abas,padding=12)
         self.abas.add(a,text='  1  Planilha e PDF  ')
         self.abas.add(b,text='  2  Pesquisa em lote SISREG  ')
-        self.abas.add(c,text='  3  Solicitações (próxima etapa)  ')
+        self.abas.add(c,text='  3  Solicitações hospitalares  ')
         ttk.Label(a,text='Os CPFs do PDF são gravados diretamente na planilha. Um backup é criado antes da primeira alteração.',
                   wraplength=950,font=('Segoe UI',10,'bold')).pack(anchor='w',pady=(0,10))
-        fx=ttk.Frame(a);fx.pack(fill='x')
-        ttk.Button(fx,text='Escolher XLSX do hospital',command=self._escolher_xlsx).pack(side='left')
-        self.lbl_xlsx=ttk.Label(fx,text='Nenhum arquivo escolhido');self.lbl_xlsx.pack(side='left',padx=12)
-        fp=ttk.Frame(a);fp.pack(fill='x',pady=8)
-        ttk.Button(fp,text='Escolher espelho PDF',command=self._escolher_pdf).pack(side='left')
-        self.lbl_pdf=ttk.Label(fp,text='PDF opcional');self.lbl_pdf.pack(side='left',padx=12)
-        fprep=ttk.Frame(a);fprep.pack(fill='x',pady=(2,9))
-        self.btn_preparar=ttk.Button(fprep,text='Preparar e atualizar CPFs na planilha',
+        seletores=ttk.Frame(a);seletores.pack(fill='x',pady=(0,8))
+        for col in (0,1): seletores.columnconfigure(col,weight=1)
+        quadro_xlsx=ttk.Frame(seletores,padding=8,relief='solid',borderwidth=1)
+        quadro_pdf=ttk.Frame(seletores,padding=8,relief='solid',borderwidth=1)
+        quadro_xlsx.grid(row=0,column=0,sticky='nsew',padx=(0,6))
+        quadro_pdf.grid(row=0,column=1,sticky='nsew',padx=(6,0))
+        ttk.Button(quadro_xlsx,text='📊  Selecionar planilha XLSX',style='Acao.TButton',
+                   command=self._escolher_xlsx).pack(fill='x')
+        self.lbl_xlsx=ttk.Label(quadro_xlsx,text='Nenhum arquivo escolhido')
+        self.lbl_xlsx.pack(anchor='w',pady=(7,0))
+        ttk.Button(quadro_pdf,text='📄  Selecionar espelho de AIH em PDF',style='Acao.TButton',
+                   command=self._escolher_pdf).pack(fill='x')
+        self.lbl_pdf=ttk.Label(quadro_pdf,text='PDF opcional')
+        self.lbl_pdf.pack(anchor='w',pady=(7,0))
+        fprep=ttk.Frame(a);fprep.pack(fill='x',pady=(1,8))
+        self.btn_preparar=ttk.Button(fprep,text='Executar conferência',
                                     command=self._preparar,style='Acao.TButton')
         self.btn_preparar.pack(side='left')
-        ttk.Label(fprep,textvariable=self.resumo,wraplength=600).pack(side='left',padx=14)
+        ttk.Label(fprep,textvariable=self.cronometro,font=('Segoe UI',11,'bold')).pack(side='left',padx=(12,8))
+        ttk.Label(fprep,text='Tempo manual por AIH (s):').pack(side='left',padx=(8,4))
+        ttk.Entry(fprep,textvariable=self.manual_por_aih,width=6).pack(side='left',padx=(0,8))
+        ttk.Label(a,textvariable=self.resumo,wraplength=960).pack(anchor='w',pady=(0,8))
         grade=ttk.Frame(a);grade.pack(fill='both',expand=True)
         cfg=[('aba','Aba',130),('linha','Linha',52),('aih','AIH',122),('paciente','Paciente',240),
              ('cpf','CPF',109),('cns','CNS',140),('situacao','Situação',260)]
@@ -222,15 +239,33 @@ class Aplicativo:
         self.barra.pack(fill='x')
         ttk.Label(b,text='O RPA pesquisa CPF por CPF. Só grava CNS quando o resultado mostra nome '
                   'inequívoco e um único CNS identificado. Resultados ambíguos viram pendência; '
-                  'o robô segue para o próximo paciente. Não acessa a etapa de solicitações agora.',
+                  'o robô segue para o próximo paciente. A etapa 3 pesquisa a AIH hospitalar.',
                   wraplength=930).pack(anchor='w',pady=(15,0))
         ttk.Label(b,text='A planilha é salva ao longo do lote. Feche-a no Excel antes de iniciar; '
                   'o programa interrompe a gravação se detectar edição externa ou bloqueio do arquivo.',
                   wraplength=930).pack(anchor='w',pady=(12,0))
-        ttk.Label(c,text='Consulta Amb → Solicitações',font=('Segoe UI',13,'bold')).pack(anchor='w',pady=(0,10))
-        ttk.Label(c,text='Ainda não automatizada. Concluiremos e homologaremos primeiro o cadastro/CNS '
-                  'em lote. Pesquisa de solicitações depende de novos seletores da tela de resultados '
-                  'e será implementada separadamente.',wraplength=920).pack(anchor='w')
+        ttk.Label(c,text='Etapa 3 — Consultar solicitações hospitalares por CNS e AIH',
+                  font=('Segoe UI',13,'bold')).pack(anchor='w',pady=(0,10))
+        ttk.Label(c,text='Após os CNS serem preenchidos, o robô pesquisa as solicitações hospitalares do CNS, '
+                  'localiza a AIH exata na tabela e abre a ficha. Só grava caráter e autorizador com '
+                  'identificação inequívoca; procedimento divergente fica sinalizado para revisão.',
+                  wraplength=920).pack(anchor='w',pady=(0,12))
+        hf=ttk.Frame(c);hf.pack(fill='x')
+        ttk.Label(hf,text='Tamanho do lote:').pack(side='left')
+        ttk.Combobox(hf,textvariable=self.limite_hospital,state='readonly',width=12,
+                     values=['5','20','50','Todos']).pack(side='left',padx=(9,12))
+        self.btn_hospital=ttk.Button(hf,text='Pesquisar solicitações hospitalares em lote',
+                  style='Acao.TButton',command=self._iniciar_hospital)
+        self.btn_hospital.pack(side='left',padx=(0,10))
+        ttk.Button(hf,text='Pausar / Retomar',command=self._pausar).pack(side='left',padx=(0,10))
+        ttk.Button(hf,text='Interromper',command=self._interromper).pack(side='left')
+        self.progresso_hospital=tk.StringVar(value='Aguardando conclusão da etapa 2 e autorização para consultar.')
+        ttk.Label(c,textvariable=self.progresso_hospital,font=('Segoe UI',11,'bold')).pack(anchor='w',pady=(18,9))
+        self.barra_hospital=ttk.Progressbar(c,mode='determinate',maximum=100,value=0)
+        self.barra_hospital.pack(fill='x')
+        ttk.Label(c,text='O tempo medido é real. A estimativa de esforço manual usa a premissa '
+                  'editável da etapa 1 e não comprova economia de trabalho. Não são alteradas '
+                  'solicitações no SISREG. Feche o Excel durante os lotes.',wraplength=920).pack(anchor='w',pady=(14,0))
         rodape=ttk.Frame(corpo);rodape.pack(fill='x',pady=(10,0))
         ttk.Label(rodape,textvariable=self.status,wraplength=910).pack(side='left',fill='x',expand=True)
         ttk.Button(rodape,text='Encerrar',command=self.encerrar).pack(side='right')
@@ -250,7 +285,7 @@ class Aplicativo:
         if self.carregando or self.processando:return
         if not self.arquivo_planilha:
             self.status.set('Selecione o XLSX hospitalar.');return
-        self.carregando=True;self.btn_preparar.configure(state='disabled')
+        self.carregando=True;self.inicio_preparo=time.perf_counter();self._atualizar_relogio();self.btn_preparar.configure(state='disabled')
         self.status.set('Indexando PDF e preparando atualização com backup...')
         def tarefa():
             try:
@@ -263,10 +298,22 @@ class Aplicativo:
                     informacao=f'{len(ix)} AIHs indexadas no espelho.'
                     if avisos: informacao+=' Estrutura do PDF requer revisão.'
                 gravacao=sessao.salvar_na_planilha(motivo='pdf')
-                self.eventos.put(('preparado',(sessao,informacao,gravacao)))
+                self.eventos.put(('preparado',(sessao,informacao,gravacao,time.perf_counter()-self.inicio_preparo)))
             except Exception as e:
                 self.eventos.put(('erro_preparo',str(e)))
         threading.Thread(target=tarefa,daemon=True).start()
+
+    def _atualizar_relogio(self):
+        if not self.carregando or self.inicio_preparo is None:return
+        decorrido=int(time.perf_counter()-self.inicio_preparo)
+        self.cronometro.set(f'Tempo: {decorrido//60:02d}:{decorrido%60:02d}')
+        self.root.after(250,self._atualizar_relogio)
+
+    @staticmethod
+    def _duracao(segundos):
+        segundos=max(0,int(segundos))
+        h, resto=divmod(segundos,3600);m,s=divmod(resto,60)
+        return f'{h}h {m}min {s}s' if h else f'{m}min {s}s'
 
     def _atualizar_tabela(self):
         itens=self.tabela.get_children()
@@ -307,6 +354,33 @@ class Aplicativo:
                 while not self.parar.is_set():
                     try: cmd,payload=self.comandos.get(timeout=0.2)
                     except queue.Empty:continue
+                    if cmd == 'hospital':
+                        indices=payload
+                        self.eventos.put(('hospital_iniciado',len(indices)))
+                        erros_seguidos=0
+                        for j,idx in enumerate(indices,1):
+                            if self.parar.is_set():break
+                            while self.pausa.is_set() and not self.parar.wait(.25):pass
+                            if self.parar.is_set():break
+                            r=self.sessao.registros[idx]
+                            inicio=time.perf_counter()
+                            try:
+                                validas=[pg for pg in contexto.pages if not pg.is_closed() and endereco_oficial(pg.url)]
+                                if not validas:raise NavegacaoInesperada('Sessão SISREG encerrada.')
+                                pagina=validas[-1]
+                                resultado=consultar_solicitacao_hospitalar(pagina,r.cns,r.aih,r.procedimento)
+                                erros_seguidos=0
+                            except Exception as exc:
+                                erros_seguidos+=1
+                                resultado=ResultadoHospital('FALHA_NAVEGACAO',
+                                              'Consulta não finalizada: '+type(exc).__name__+'. Revisar a tela do SISREG.')
+                            self.eventos.put(('hospital_item',(idx,resultado,time.perf_counter()-inicio,j,len(indices))))
+                            if erros_seguidos>=3:
+                                self.eventos.put(('hospital_alerta','Três falhas seguidas; lote hospitalar suspenso.'))
+                                break
+                            self.parar.wait(1.8)
+                        self.eventos.put(('hospital_fim',len(indices)))
+                        continue
                     if cmd!='lote':continue
                     indices=payload
                     self.eventos.put(('lote_iniciado',len(indices)))
@@ -359,12 +433,31 @@ class Aplicativo:
             self.status.set('Não há CPF pendente elegível neste lote.');return
         numero=self.limite.get()
         if numero!='Todos':selecionados=selecionados[:int(numero)]
-        self.processando=True;self.persistencia_falhou=False;self.navegacao_falhou=False;self.pausa.clear();self.parar.clear()
+        self.tipo_lote='cadastro';self.processando=True;self.persistencia_falhou=False;self.navegacao_falhou=False;self.pausa.clear();self.parar.clear()
         self.dados_atuais={'cpf':0,'cns':0,'pendentes':0,'falhas':0,'total':len(selecionados)}
         self.barra.configure(value=0)
         self.btn_lote.configure(state='disabled')
         self.comandos.put(('lote',selecionados))
         self.status.set(f'Lote iniciado com {len(selecionados)} pesquisas, sem interação linha a linha.')
+    def _iniciar_hospital(self):
+        if self.processando:
+            self.status.set('Outro lote em execução; aguarde sua conclusão.');return
+        if not self.sessao.origem or not self.thread_navegador or not self.thread_navegador.is_alive() or not self.login_confirmado.get():
+            self.status.set('Prepare a planilha e autentique-se no SISREG antes da etapa 3.');return
+        candidatos=[i for i,r in enumerate(self.sessao.registros) if cns_formato(r.cns)
+                    and r.aih and r.nome and r.consulta_hospitalar not in
+                    ('FICHA_CONFERIDA','PROCEDIMENTO_DIVERGENTE')
+                    and not r.situacao.startswith(('CNS_CONFLITO','CPF_CONFLITANTE','ESPELHOS_CONFLITANTES'))]
+        if not candidatos:
+            self.status.set('Não há solicitações hospitalares pendentes elegíveis com CNS na planilha.');return
+        if self.limite_hospital.get()!='Todos':candidatos=candidatos[:int(self.limite_hospital.get())]
+        self.tipo_lote='hospital';self.processando=True
+        self.persistencia_falhou=False;self.navegacao_falhou=False
+        self.parar.clear();self.pausa.clear()
+        self.btn_hospital.configure(state='disabled');self.barra_hospital.configure(value=0)
+        self.comandos.put(('hospital',candidatos))
+        self.status.set(f'Etapa 3 iniciada: {len(candidatos)} AIHs para consulta, sem escolher posições fixas na tabela.')
+
     def _pausar(self):
         if not self.processando:return
         if self.pausa.is_set():
@@ -397,11 +490,18 @@ class Aplicativo:
             while True:
                 evento,dado=self.eventos.get_nowait()
                 if evento=='preparado':
-                    sessao,informacao,atualizacao=dado
+                    sessao,informacao,atualizacao,segundos=dado
                     self.sessao=sessao
                     self._atualizar_tabela()
+                    self.cronometro.set('Tempo: '+self._duracao(segundos))
+                    try:
+                        base=float(self.manual_por_aih.get().replace(',','.'))
+                        premissa=(f' · Manual estimado: {self._duracao(len(sessao.registros)*base)} '
+                                  f'({base:g}s/AIH, premissa editável)') if 0<base<=3600 else ''
+                    except ValueError:premissa=''
                     self.resumo.set(f'{len(sessao.registros)} registros · {informacao} · '
-                                    f'{atualizacao["cpf"]} CPF(s) gravados.')
+                                    f'{atualizacao["cpf"]} CPF(s) gravados · '
+                                    f'RPA: {self._duracao(segundos)}{premissa}')
                     self.status.set('Planilha original atualizada, com backup. Etapa 2 liberada.')
                     self.carregando=False;self.btn_preparar.configure(state='normal')
                 elif evento=='erro_preparo':
@@ -413,6 +513,30 @@ class Aplicativo:
                 elif evento=='autenticado':
                     self.browser_ready=True;self.login_confirmado.set(True)
                     self.status.set('Menu pós-login identificado. Você pode iniciar o lote SISREG.')
+                elif evento=='hospital_iniciado':
+                    self.progresso_hospital.set(f'Iniciando {dado} consultas hospitalares...')
+                elif evento=='hospital_item':
+                    idx,resultado,duracao,contador,total=dado
+                    reg=self.sessao.registros[idx]
+                    self.sessao.registrar_hospital(reg,resultado,duracao)
+                    if contador%15==0: self._salvar_checkpoint()
+                    if self.tabela.exists(str(idx)):
+                        self.tabela.item(str(idx),values=(reg.aba,reg.linha,reg.aih,reg.nome,reg.cpf,reg.cns,reg.situacao))
+                    self.barra_hospital.configure(value=100*contador/max(1,total))
+                    self.progresso_hospital.set(f'{contador}/{total} consultadas · última: {resultado.situacao} · '
+                                               f'{self._duracao(duracao)} nesta AIH')
+                elif evento=='hospital_fim':
+                    self._salvar_checkpoint()
+                    self.processando=False;self.btn_hospital.configure(state='normal')
+                    if self.persistencia_falhou:
+                        self.status.set('FALHA de salvamento da etapa 3; não feche antes de recuperar os resultados.')
+                    elif self.navegacao_falhou:
+                        self.status.set('Etapa 3 suspensa por falhas consecutivas. Dados anteriores foram preservados.')
+                    else:
+                        self.status.set('Etapa 3 encerrada: conferências verificáveis salvas. Confira as pendências.')
+                elif evento=='hospital_alerta':
+                    self.navegacao_falhou=True
+                    self.status.set(str(dado))
                 elif evento=='lote_iniciado':
                     self.progresso.set(f'Iniciando pesquisas de {dado} pacientes...')
                 elif evento=='lote_item':
@@ -451,6 +575,7 @@ class Aplicativo:
                     if self.processando:
                         self._salvar_checkpoint()
                         self.processando=False;self.btn_lote.configure(state='normal')
+                        self.btn_hospital.configure(state='normal')
         except queue.Empty:pass
         self.root.after(140,self._ler_eventos)
 

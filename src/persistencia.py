@@ -13,7 +13,9 @@ from pathlib import Path
 from openpyxl import load_workbook
 
 COLUNAS_AUDITORIA = ('rpaSituacao', 'rpaDetalhe', 'rpaOrigemPDF',
-                   'rpaConsultaAmbulatorial', 'rpaAtualizadoEm')
+                   'rpaConsultaAmbulatorial', 'rpaAtualizadoEm',
+                   'rpaConsultaHospitalar', 'rpaProcedimentoSISREG',
+                   'rpaTempoConsultaSegundos')
 
 class AlteracaoExterna(Exception):
     pass
@@ -43,7 +45,7 @@ def gravar_na_origem(sessao, *, motivo='preparacao', backup=True) -> dict:
         raise AlteracaoExterna('Planilha alterada externamente. Recarregue antes de salvar; nada foi sobrescrito.')
 
     wb = load_workbook(origem, keep_links=False, data_only=False)
-    quantidade_cpf = quantidade_cns = quantidade_status = 0
+    quantidade_cpf = quantidade_cns = quantidade_status = quantidade_hospital = 0
     try:
         for aba in ('POA CIRURGICO','PT6','ALTA COMPLEXIDADE'):
             ws = wb[aba]
@@ -52,7 +54,7 @@ def gravar_na_origem(sessao, *, motivo='preparacao', backup=True) -> dict:
                     raise AlteracaoExterna(f'Coluna de auditoria ocupada em {aba}, {col}. Não sobrescrevemos.')
                 ws.cell(1,col).value = cab
             ws.freeze_panes = 'A2'
-            ws.auto_filter.ref = f'A1:L{max(2, ws.max_row)}'
+            ws.auto_filter.ref = f'A1:O{max(2, ws.max_row)}'
         for r in sessao.registros:
             ws = wb[r.aba]
             cpf = ws.cell(r.linha,4)
@@ -66,8 +68,17 @@ def gravar_na_origem(sessao, *, motivo='preparacao', backup=True) -> dict:
                 cns.value = str(r.cns)
                 cns.number_format = '@'
                 quantidade_cns += 1
+            carater=ws.cell(r.linha,6)
+            autorizador=ws.cell(r.linha,7)
+            if r.carater and carater.value in ('',None):
+                carater.value=str(r.carater);carater.number_format='@'
+                quantidade_hospital+=1
+            if r.autorizador and autorizador.value in ('',None):
+                autorizador.value=str(r.autorizador);autorizador.number_format='@'
+                quantidade_hospital+=1
             valores=(r.situacao, r.detalhe, r.origem_pdf,
-                     r.consulta_ambulatorial, r.atualizado_em)
+                     r.consulta_ambulatorial, r.atualizado_em, r.consulta_hospitalar,
+                     r.procedimento_sisreg, str(r.tempo_consulta) if r.tempo_consulta else '')
             for col,valor in enumerate(valores,8):
                 valor = str(valor or '')
                 if valor.startswith(('=','+','-','@')):
@@ -102,6 +113,7 @@ def gravar_na_origem(sessao, *, motivo='preparacao', backup=True) -> dict:
             temporario.unlink(missing_ok=True)
     finally:
         wb.close()
-    return {'cpf':quantidade_cpf,'cns':quantidade_cns,'campos_atualizados':quantidade_status,
+    return {'cpf':quantidade_cpf,'cns':quantidade_cns,'hospital':quantidade_hospital,
+            'campos_atualizados':quantidade_status,
             'backup':str(origem.with_name(origem.stem+'.backup_antes_RPA.xlsx')),
             'motivo':motivo}

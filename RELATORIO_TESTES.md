@@ -1,14 +1,9 @@
-# Relatório de testes v0.3
+# Validação técnica v0.4
 
-Data: 19/10/2026. Nenhum acesso ao SISREG real foi realizado nesta homologação automatizada.
+**Resultado local:** `53 tests / OK`. Composição: testes anteriores do fluxo v0.3, regras de CNS destacado, caráter, autorizador, códigos de procedimento, gravação segura no XLSX, divergências, AIH duplicada e AIH exata em linha variável. A interface Tkinter foi instanciada com display virtual e as três abas abriram.
 
-- **33 testes unitários e de integração sintéticos: aprovados**.
-- Arquivo XLSX simulado, PDF textual de espelho simulado, AIH com e sem hífen.
-- Backup e alterações na planilha original testados; persistência de CPF/CNS e conservação das abas A:G.
-- Alteração externa antes de salvar detectada e bloqueada; CNS divergente não substituído.
-- Texto de resposta simulado: CNS único com nome/CPF compatíveis aceita; CNS múltiplos, nome distinto ou CPF diferente resultam pendentes.
-- Navegação simulada com botão real por `name`/`onclick`; sem login no sistema de produção.
-- Interface Tkinter instanciada em ambiente gráfico virtual.
-- **Pendente:** autenticação real, retorno da pesquisa no SISREG, valores e seletores da tela pós-pesquisa, execução Windows via GitHub Actions e aprovação institucional.
+**O que NÃO foi comprovado:** login oficial com credenciais reais; operação dentro da rede da SMS; presença estável dos XPaths de resultados e de ficha; interpretação da tabela do SISREG autenticado; build Windows do GitHub Actions. Essas verificações são mandatórias na homologação.
 
-Não afirmar que a captura do CNS real está homologada até o teste assistido da Regulação/TI.
+**Riscos tratados:** sem escolha arbitrária de primeira solicitação; arquivo XLSX atualizado somente com evidência; dado conflitante preservado; backup da fonte; saída sem senha; não modificar o SISREG; não registrar HTML ou dados de pacientes nos testes; campo inexistente não é inferido.
+
+**Critérios mínimos para homologação:** testar um CNS encontrado, um CPF sem cadastro, uma AIH com duas solicitações, uma AIH não localizada, uma divergência de procedimento, um código autorizador com zeros iniciais, uma alteração externa da planilha, e 5 AIHs em sequência. Inspecionar manualmente células F/G e colunas M:O.

@@ -19,7 +19,9 @@ ABAS = ('POA CIRURGICO', 'PT6', 'ALTA COMPLEXIDADE')
 COLUNAS = ('nomePaciente', 'numeroAIH', 'numeroProcedimento', 'numeroCPF',
            'numeroCNS', 'caraterInternacao', 'codigoAutorizador')
 COLUNAS_ADICIONAIS = ('rpaSituacao', 'rpaDetalhe', 'rpaOrigemPDF',
-                      'rpaConsultaAmbulatorial', 'rpaAtualizadoEm')
+                      'rpaConsultaAmbulatorial', 'rpaAtualizadoEm',
+                      'rpaConsultaHospitalar', 'rpaProcedimentoSISREG',
+                      'rpaTempoConsultaSegundos')
 
 
 def valor_texto(valor: Any) -> str:
@@ -49,6 +51,9 @@ class Registro:
     revisado: bool = False
     cpf_origem: str = ''
     cns_origem: str = ''
+    consulta_hospitalar: str = ''
+    procedimento_sisreg: str = ''
+    tempo_consulta: float = 0.0
 
 
 class SessaoPlanilha:
@@ -158,6 +163,35 @@ class SessaoPlanilha:
             registro.situacao = 'PENDENTE_' + (motivo[:80] or 'CONSULTA')
             registro.detalhe = 'Cadastro pesquisado, mas identidade/CNS não puderam ser comprovados automaticamente.'
 
+    def registrar_hospital(self, registro: Registro, resultado, duracao: float) -> None:
+        """Atualiza campos vazios quando a ficha prova AIH exata; divergência exige revisão."""
+        registro.tempo_consulta = round(max(0.0, duracao), 2)
+        registro.consulta_hospitalar = resultado.situacao
+        registro.atualizado_em = datetime.now().isoformat(timespec='seconds')
+        registro.procedimento_sisreg = resultado.procedimento or ''
+        registro.detalhe = resultado.detalhe
+        if resultado.situacao not in ('FICHA_CONFERIDA', 'PROCEDIMENTO_DIVERGENTE'):
+            registro.situacao = 'PENDENTE_' + resultado.situacao
+            return
+        # Não alteramos código produzido. Somente vinculamos campos reais e únicos.
+        conflitos = []
+        if registro.carater and registro.carater.zfill(2) != resultado.carater:
+            conflitos.append('CARATER_CONFLITANTE')
+        if registro.autorizador and registro.autorizador != resultado.autorizador:
+            conflitos.append('AUTORIZADOR_CONFLITANTE')
+        if conflitos:
+            registro.situacao = 'PENDENTE_' + '_'.join(conflitos)
+            registro.detalhe = 'Valores da fonte SISREG diferem dos campos preenchidos no hospital; nenhuma substituição.'
+            return
+        if not registro.carater:
+            registro.carater = resultado.carater
+        if not registro.autorizador:
+            registro.autorizador = resultado.autorizador
+        registro.situacao = ('PENDENTE_PROCEDIMENTO_DIVERGENTE'
+                             if resultado.situacao == 'PROCEDIMENTO_DIVERGENTE'
+                             else 'SOLICITACAO_HOSPITALAR_CONFERIDA')
+        registro.revisado = True
+
     def confirmar_cns_manual(self, registro: Registro, cns: str, identidade_confirmada: bool) -> None:
         numero = digitos(cns)
         if not identidade_confirmada:
@@ -194,7 +228,7 @@ class SessaoPlanilha:
                 for i, cab in enumerate(COLUNAS_ADICIONAIS, 8):
                     ws.cell(1, i, cab)
                 ws.freeze_panes = 'A2'
-                ws.auto_filter.ref = f'A1:L{max(ws.max_row, 2)}'
+                ws.auto_filter.ref = f'A1:O{max(ws.max_row, 2)}'
             for r in self.registros:
                 ws = wb[r.aba]
                 # Sobrescritas SOMENTE de campos vazios já confirmados.
@@ -202,8 +236,15 @@ class SessaoPlanilha:
                     ws.cell(r.linha, 4, r.cpf).number_format = '@'
                 if not r.cns_origem and r.cns:
                     ws.cell(r.linha, 5, r.cns).number_format = '@'
+                if not r.carater and not r.autorizador:
+                    pass
+                if r.carater and not ws.cell(r.linha,6).value:
+                    ws.cell(r.linha,6,r.carater).number_format='@'
+                if r.autorizador and not ws.cell(r.linha,7).value:
+                    ws.cell(r.linha,7,r.autorizador).number_format='@'
                 campos = (r.situacao, r.detalhe, r.origem_pdf,
-                          r.consulta_ambulatorial, r.atualizado_em)
+                          r.consulta_ambulatorial, r.atualizado_em, r.consulta_hospitalar,
+                          r.procedimento_sisreg, str(r.tempo_consulta))
                 for c, texto in enumerate(campos, 8):
                     celula = ws.cell(r.linha, c)
                     # Escrever como texto, nunca fórmula proveniente dos dados.

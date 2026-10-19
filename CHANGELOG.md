@@ -1,15 +1,14 @@
-# Changelog
+# Histórico de versões do RPA SISREG
 
-## v0.3.0 — CPF e CNS em lote
-- Preserva interface local com 3 etapas e simplifica o fluxo para operação por lote.
-- Leitura do espelho e atualização automática da própria XLSX (não apenas cópia).
-- Backup antes da primeira gravação, hashes, gravação atômica e controle de edição externa.
-- Pesquisa múltipla por CPF no SISREG, com botão `btn_pesquisar` identificado pelo nome e `onclick`.
-- Procura campo de pesquisa também em frames internos oficiais; verifica presença real do formulário antes de avançar.
-- Só associa CNS quando o resultado mostrar nome inequívoco e CNS rotulado único; demais registros permanecem pendentes.
-- Lotes de 5, 20, 50 ou todos, com pausa, checkpoints, retomada e pausa por 3 falhas consecutivas.
-- Consulta Amb → Solicitações permanece fora do escopo desta versão.
-- Testes com pacientes e AIHs **inteiramente fictícios**.
+## 0.4.0 — Consulta hospitalar em lote (homologação)
+- Controles de seleção XLSX/PDF reposicionados lado a lado com estilo unificado.
+- Preparação renomeada para **Executar conferência**, com cronômetro real e referência manual editável por AIH, explicitamente ilustrativa.
+- Captura conservadora do CNS exibido no cadastro dentro de `td[colspan=2] font[size=3] b`, exigindo nome/CPF pesquisado e unicidade.
+- Etapa 3 operacional para consulta hospitalar por CNS, correspondência de AIH na tabela e abertura de ficha única.
+- Extração condicional de caráter, autorizador e código solicitado; atualização das colunas originais F/G e preservação de C, sem sobrescrita de conflitos.
+- Colunas de rastreabilidade M:O para situação hospitalar, procedimento consultado e tempo gasto.
+- Checkpoints de planilha, identificação de conflitos e suspensão por falhas consecutivas.
+- 53 testes automatizados sintéticos. Login real, layout da ficha e executável Windows ainda pendentes de homologação.
 
-## v0.2.0 — PDF e consulta individual assistida
-- Preservada no histórico do GitHub para rollback.
+## 0.3.0
+- Preparação em lote, CPF do espelho, backup XLSX e pesquisa de cadastro CNS.
