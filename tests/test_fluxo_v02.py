@@ -37,18 +37,10 @@ class TesteEspelho(unittest.TestCase):
         self.assertEqual(ix['4226500330295'][0].cpf, '11144477735')
 
     def test_pdf_textual_em_arquivo(self):
-        from reportlab.pdfgen import canvas
-        with tempfile.TemporaryDirectory() as d:
-            p = Path(d) / 'espelho_ficticio.pdf'
-            c = canvas.Canvas(str(p))
-            c.drawString(40, 730, 'SIHD2 - ESPELHO DE AIH')
-            c.drawString(40, 712, 'Num AIH: 422650033029-4  Situacao: OK')
-            c.drawString(40, 693, 'Paciente: ANA MARIA   Doc: 00000')
-            c.drawString(40, 675, 'CNS/CPF: 11144477735')
-            c.save()
-            dados, avisos = ler_espelhos_pdf(p)
-            self.assertEqual(avisos, [])
-            self.assertEqual(dados['4226500330294'][0].cpf, '11144477735')
+        p = Path(__file__).resolve().parent / 'fixtures' / 'espelho_sintetico.pdf'
+        dados, avisos = ler_espelhos_pdf(p)
+        self.assertEqual(avisos, [])
+        self.assertEqual(dados['4226500330294'][0].cpf, '11144477735')
 
     def test_cns_nao_e_cpf(self):
         ix = extrair_texto_paginas(['Num AIH: 422650033029-4\nPaciente: ANA MARIA\nCNS/CPF: 123456789012345'])

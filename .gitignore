@@ -9,3 +9,4 @@ build/
 *.pdf
 *.xlsx
 !tests/fixtures/hospital_sintetico.xlsx
+!tests/fixtures/espelho_sintetico.pdf
