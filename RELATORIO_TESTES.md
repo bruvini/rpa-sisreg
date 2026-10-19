@@ -1,7 +1,7 @@
 # Relatório de validação técnica — RPA SISREG v0.2
 
 - 24 testes automatizados **aprovados** em execução Linux isolada (nenhum acesso ao SISREG).
-- PDF fictício textual gerado no teste: leitura por AIH `422650033029-4` e correspondência com `4226500330294`.
+- PDF fictício textual gerado no teste: leitura por AIH `900000000012-3` e correspondência com `9000000000123`.
 - Confirmação negativa: nome divergente, espelho conflituoso e CPF inválido não promovem dados automaticamente.
 - Importação da planilha de três abas/cabeçalhos e exportação de uma cópia XLSX testadas.
 - Teste do browser por mocks: abertura das opções do menu ambulatorial e submissão de CNS, sem leitura de resposta.

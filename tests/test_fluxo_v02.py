@@ -12,58 +12,58 @@ from sisreg_navigation import consultar_cadastro, consultar_solicitacoes_amb, Na
 
 class TesteEspelho(unittest.TestCase):
     def test_aih_com_e_sem_hifen(self):
-        self.assertEqual(normalizar_aih('422650033029-4'), '4226500330294')
-        self.assertEqual(normalizar_aih('4226500330294'), '4226500330294')
+        self.assertEqual(normalizar_aih('900000000012-3'), '9000000000123')
+        self.assertEqual(normalizar_aih('9000000000123'), '9000000000123')
 
     def test_a_aih_malformada_nao_e_comparada(self):
-        self.assertEqual(normalizar_aih('422650033029'), '')
+        self.assertEqual(normalizar_aih('900000000012'), '')
 
     def test_pesquisa_textual_de_espelho(self):
-        texto = ('SIHD2 Num AIH: 422650033029-4 Situação: OK\n'
-                 'Paciente: DERVANIA DOROTI DRASE DA SILVA    Doc: 123456\n'
-                 'CNS/CPF: 58260072904   Procedimento principal: 0408050063\n')
+        texto = ('SIHD2 Num AIH: 900000000012-3 Situação: OK\n'
+                 'Paciente: ANA MARIA EXEMPLO    Doc: 123456\n'
+                 'CNS/CPF: 11144477735   Procedimento principal: 0408050063\n')
         index = extrair_texto_paginas([texto])
-        self.assertEqual(len(index['4226500330294']), 1)
-        reg, status = escolher_espelho(index['4226500330294'], 'DERVANIA DOROTI DRASE DA SILVA')
+        self.assertEqual(len(index['9000000000123']), 1)
+        reg, status = escolher_espelho(index['9000000000123'], 'ANA MARIA EXEMPLO')
         self.assertEqual(status, 'DOCUMENTO_VALIDADO_POR_AIH_E_NOME')
-        self.assertEqual(reg.cpf, '58260072904')
+        self.assertEqual(reg.cpf, '11144477735')
         self.assertEqual(reg.cns, '')
 
     def test_multiplas_aih_na_mesma_pagina(self):
-        texto = ('Num AIH: 422650033029-4\nPaciente: DERVANIA DOROTI DRASE DA SILVA\nCNS/CPF: 58260072904\n'
-                 'Num AIH: 422650033029-5\nPaciente: OUTRA PESSOA\nCNS/CPF: 11144477735\n')
+        texto = ('Num AIH: 900000000012-3\nPaciente: ANA MARIA EXEMPLO\nCNS/CPF: 11144477735\n'
+                 'Num AIH: 900000000012-4\nPaciente: OUTRA PESSOA\nCNS/CPF: 11144477735\n')
         ix = extrair_texto_paginas([texto])
-        self.assertEqual(set(ix), {'4226500330294', '4226500330295'})
-        self.assertEqual(ix['4226500330295'][0].cpf, '11144477735')
+        self.assertEqual(set(ix), {'9000000000123', '9000000000124'})
+        self.assertEqual(ix['9000000000124'][0].cpf, '11144477735')
 
     def test_pdf_textual_em_arquivo(self):
         p = Path(__file__).resolve().parent / 'fixtures' / 'espelho_sintetico.pdf'
         dados, avisos = ler_espelhos_pdf(p)
         self.assertEqual(avisos, [])
-        self.assertEqual(dados['4226500330294'][0].cpf, '11144477735')
+        self.assertEqual(dados['9000000000123'][0].cpf, '11144477735')
 
     def test_cns_nao_e_cpf(self):
-        ix = extrair_texto_paginas(['Num AIH: 422650033029-4\nPaciente: ANA MARIA\nCNS/CPF: 123456789012345'])
-        self.assertEqual(ix['4226500330294'][0].cpf, '')
-        self.assertEqual(ix['4226500330294'][0].cns, '123456789012345')
+        ix = extrair_texto_paginas(['Num AIH: 900000000012-3\nPaciente: ANA MARIA\nCNS/CPF: 123456789012345'])
+        self.assertEqual(ix['9000000000123'][0].cpf, '')
+        self.assertEqual(ix['9000000000123'][0].cns, '123456789012345')
 
     def test_nome_divergente(self):
-        ix = extrair_texto_paginas(['Num AIH: 422650033029-4\nPaciente: ANA MARIA\nCNS/CPF: 11144477735'])
-        e, status = escolher_espelho(ix['4226500330294'], 'JOANA MARIA')
+        ix = extrair_texto_paginas(['Num AIH: 900000000012-3\nPaciente: ANA MARIA\nCNS/CPF: 11144477735'])
+        e, status = escolher_espelho(ix['9000000000123'], 'JOANA MARIA')
         self.assertIsNone(e)
         self.assertEqual(status, 'NOME_DIVERGENTE_ESPELHO')
 
     def test_pdf_duplicado_conflitante(self):
-        ix = extrair_texto_paginas(['Num AIH: 422650033029-4\nPaciente: ANA MARIA\nCNS/CPF: 11144477735',
-             'Num AIH: 422650033029-4\nPaciente: OUTRA PESSOA\nCNS/CPF: 58260072904'])
-        e, status = escolher_espelho(ix['4226500330294'], 'ANA MARIA')
+        ix = extrair_texto_paginas(['Num AIH: 900000000012-3\nPaciente: ANA MARIA\nCNS/CPF: 11144477735',
+             'Num AIH: 900000000012-3\nPaciente: OUTRA PESSOA\nCNS/CPF: 11144477735'])
+        e, status = escolher_espelho(ix['9000000000123'], 'ANA MARIA')
         self.assertIsNone(e)
         self.assertEqual(status, 'ESPELHOS_CONFLITANTES')
 
     def test_cpf_checksum(self):
-        self.assertTrue(cpf_valido('58260072904'))
+        self.assertTrue(cpf_valido('11144477735'))
         self.assertFalse(cpf_valido('11111111111'))
-        self.assertFalse(cpf_valido('58260072905'))
+        self.assertFalse(cpf_valido('11144477734'))
 
 
 class TestePlanilha(unittest.TestCase):
@@ -79,7 +79,7 @@ class TestePlanilha(unittest.TestCase):
         s = SessaoPlanilha()
         self.assertEqual(s.carregar(self.arq), 1)
         from aih_extract import extrair_texto_paginas
-        ix=extrair_texto_paginas(['Num AIH: 422650033029-4\nPaciente: ANA MARIA\nCNS/CPF: 11144477735'])
+        ix=extrair_texto_paginas(['Num AIH: 900000000012-3\nPaciente: ANA MARIA\nCNS/CPF: 11144477735'])
         fake_pdf=Path(self.tmp.name)/'simulado.pdf'
         fake_pdf.write_text('conteudo ficticio')
         s.complementar_pdf(ix, fake_pdf)

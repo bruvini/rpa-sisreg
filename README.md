@@ -5,7 +5,7 @@
 ## O que já funciona
 
 1. Importa o XLSX padronizado do hospital, com **exatamente** as abas `POA CIRURGICO`, `PT6` e `ALTA COMPLEXIDADE`, e os sete cabeçalhos informados na linha 1.
-2. Aceita espelho de AIH em PDF **textual/pesquisável**, opcional. Indexa as AIHs uma única vez e trata `4226500330294` = `422650033029-4` (número de 13 dígitos).
+2. Aceita espelho de AIH em PDF **textual/pesquisável**, opcional. Indexa as AIHs uma única vez e trata `9000000000123` = `900000000012-3` (número de 13 dígitos).
 3. Confere **AIH e nome** antes de anexar documentos do PDF. `CNS/CPF` com CPF válido (11 dígitos) é tratado como CPF; documento de 15 dígitos é tratado como CNS. Se houver divergência, identificador inválido, espelhos conflitantes ou campo ausente, não preenche silenciosamente.
 4. Abre o Edge/Chrome, faz login com usuário e senha da sessão local, mas **não salva credenciais**. A operadora confirma que o login foi aceito.
 5. Para uma AIH selecionada, navega pelo menu **Ambulatorial** e pesquisa o cadastro por CPF ou CNS.
