@@ -1,0 +1,54 @@
+name: Compilar login SISREG para Windows
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "tests/**"
+      - "requirements-build.txt"
+      - ".github/workflows/compilar-windows.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  gerar-exe:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Baixar código
+        uses: actions/checkout@v4
+
+      - name: Configurar Python apenas no servidor de compilação
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: requirements-build.txt
+
+      - name: Instalar dependências no servidor de compilação
+        run: python -m pip install -r requirements-build.txt
+
+      - name: Rodar testes de segurança/formulário
+        run: python -m unittest discover -s tests -v
+
+      - name: Compilar EXE Windows autocontido
+        run: python -m PyInstaller --noconfirm --clean --onefile --windowed --name SISREG_Login --collect-all playwright src/sisreg_login.py
+
+      - name: Calcular hash para conferência
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash -Algorithm SHA256 dist/SISREG_Login.exe).Hash
+          "SISREG_Login.exe  SHA256: $hash" | Out-File -FilePath dist/SHA256.txt -Encoding utf8
+
+      - name: Disponibilizar executável
+        uses: actions/upload-artifact@v4
+        with:
+          name: SISREG_Login_Windows
+          path: |
+            dist/SISREG_Login.exe
+            dist/SHA256.txt
+          if-no-files-found: error
+          retention-days: 7
