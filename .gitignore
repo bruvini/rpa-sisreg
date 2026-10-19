@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+dist/
+build/
+*.spec
+*.log
+*.sisregaudit
+*.pdf
+*.xlsx
+!tests/fixtures/hospital_sintetico.xlsx

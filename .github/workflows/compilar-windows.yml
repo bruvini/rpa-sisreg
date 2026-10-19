@@ -1,49 +1,41 @@
-name: Compilar login SISREG para Windows
-
+name: Compilar RPA SISREG para Windows
 on:
   workflow_dispatch:
   push:
     branches: [main]
     paths:
-      - "src/**"
-      - "tests/**"
-      - "requirements-build.txt"
-      - ".github/workflows/compilar-windows.yml"
-
+      - 'src/**'
+      - 'tests/**'
+      - 'requirements-build.txt'
+      - 'compilar_windows.ps1'
+      - '.github/workflows/compilar-windows.yml'
 permissions:
   contents: read
-
 jobs:
   gerar-exe:
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
-      - name: Baixar código
+      - name: Baixar codigo
         uses: actions/checkout@v4
-
-      - name: Configurar Python apenas no servidor de compilação
+      - name: Preparar Python somente no ambiente de compilacao
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
           cache: 'pip'
           cache-dependency-path: requirements-build.txt
-
-      - name: Instalar dependências no servidor de compilação
+      - name: Instalar bibliotecas
         run: python -m pip install -r requirements-build.txt
-
-      - name: Rodar testes de segurança/formulário
+      - name: Executar testes unitarios e de integracao sintetica
         run: python -m unittest discover -s tests -v
-
-      - name: Compilar EXE Windows autocontido
-        run: python -m PyInstaller --noconfirm --clean --onefile --windowed --name SISREG_Login --collect-all playwright src/sisreg_login.py
-
-      - name: Calcular hash para conferência
+      - name: Gerar SISREG_Login.exe
+        run: python -m PyInstaller --noconfirm --clean --onefile --windowed --name SISREG_Login --paths src --collect-all playwright --collect-all pymupdf --collect-all openpyxl src/sisreg_login.py
+      - name: Registrar SHA-256 do executavel
         shell: pwsh
         run: |
-          $hash = (Get-FileHash -Algorithm SHA256 dist/SISREG_Login.exe).Hash
-          "SISREG_Login.exe  SHA256: $hash" | Out-File -FilePath dist/SHA256.txt -Encoding utf8
-
-      - name: Disponibilizar executável
+          $sha = (Get-FileHash -Algorithm SHA256 dist/SISREG_Login.exe).Hash
+          "SISREG_Login.exe SHA256: $sha" | Out-File -FilePath dist/SHA256.txt -Encoding utf8
+      - name: Disponibilizar EXE Windows
         uses: actions/upload-artifact@v4
         with:
           name: SISREG_Login_Windows
