@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 from tkinter import filedialog
 from datetime import datetime
+from sisreg_navigation import (consultar_cadastro, ler_resultado_cadastro, autenticao_ativa, NavegacaoInesperada)
 from aih_extract import ler_espelhos_pdf, cpf_valido, cns_formato
 from planilha import SessaoPlanilha
 from sisreg_navigation import consultar_cadastro, consultar_solicitacoes_amb, NavegacaoInesperada
@@ -32,7 +33,7 @@ XPATH_USUARIO = "/html/body/div[1]/div/div[4]/form/div/div[1]/div[1]/div[2]/inpu
 XPATH_SENHA = "/html/body/div[1]/div/div[4]/form/div/div[1]/div[1]/div[5]/input"
 XPATH_ENTRAR = "/html/body/div[1]/div/div[4]/form/div/div[1]/div[1]/div[8]/input"
 
-VERSAO = "0.2.0 — espelho de AIH e consulta ambulatorial assistida"
+VERSAO = "0.3.0 — processamento em lote da planilha e CPF/CNS"
 AZUL = "#063c68"
 FUNDO = "#f2f6fa"
 
@@ -109,407 +110,372 @@ def submeter_login(page, usuario: str, senha: str) -> None:
 
 
 class Aplicativo:
-    """Interface de três passos; todas as operações do Playwright usam uma só thread."""
+    """Executa PDF em lote + pesquisa somente leitura por CPF, com status e retomada."""
 
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
-        root.title('RPA SISREG · Preparação e consulta assistida — v0.2')
-        root.geometry('1010x736')
-        root.minsize(885, 655)
+        root.title('RPA SISREG · Conferência em lote — v0.3')
+        root.geometry('1080x750')
+        root.minsize(900,640)
         root.configure(bg=FUNDO)
         root.protocol('WM_DELETE_WINDOW', self.encerrar)
-        self.eventos: queue.Queue = queue.Queue()
-        self.comandos: queue.Queue = queue.Queue()
-        self.parar = threading.Event()
-        self.thread_navegador: threading.Thread | None = None
-        self.sessao = SessaoPlanilha()
-        self.arquivo_planilha: Path | None = None
-        self.arquivo_pdf: Path | None = None
-        self.carregando = False
-        self.browser_ready = False
-        self.usuario = tk.StringVar()
-        self.senha = tk.StringVar()
-        self.navegador = tk.StringVar(value='Google Chrome')
-        self.login_confirmado = tk.BooleanVar(value=False)
-        self.identidade_confirmada = tk.BooleanVar(value=False)
-        self.cns_confirmado = tk.StringVar()
-        self.status = tk.StringVar(value='Selecione a planilha-padrão e, se disponível, o PDF das AIHs.')
-        self.resumo = tk.StringVar(value='Nenhum registro carregado.')
-        self.selecionado = tk.StringVar(value='Nenhuma AIH selecionada.')
+        self.eventos=queue.Queue()
+        self.comandos=queue.Queue()
+        self.parar=threading.Event()
+        self.pausa=threading.Event()
+        self.thread_navegador=None
+        self.sessao=SessaoPlanilha()
+        self.arquivo_planilha=None
+        self.arquivo_pdf=None
+        self.carregando=False
+        self.browser_ready=False
+        self.processando=False
+        self.persistencia_falhou=False
+        self.navegacao_falhou=False
+        self.usuario=tk.StringVar()
+        self.senha=tk.StringVar()
+        self.navegador=tk.StringVar(value='Google Chrome')
+        self.login_confirmado=tk.BooleanVar(value=False)
+        self.limite=tk.StringVar(value='20')
+        self.status=tk.StringVar(value='Selecione a planilha-padrão e o espelho PDF do hospital.')
+        self.resumo=tk.StringVar(value='Nenhuma conferência carregada.')
+        self.progresso=tk.StringVar(value='Aguardando preparação.')
+        self.dados_atuais={'cpf':0,'cns':0,'pendentes':0,'falhas':0,'total':0}
         self._montar()
-        root.after(140, self._ler_eventos)
+        root.after(140,self._ler_eventos)
 
-    def _montar(self) -> None:
-        estilos = ttk.Style()
-        estilos.theme_use('clam')
-        estilos.configure('TFrame', background=FUNDO)
-        estilos.configure('TLabel', background=FUNDO, foreground='#183b59', font=('Segoe UI', 10))
-        estilos.configure('TButton', font=('Segoe UI', 10), padding=8)
-        estilos.configure('Acao.TButton', background=AZUL, foreground='white', font=('Segoe UI', 10, 'bold'), padding=9)
-        estilos.map('Acao.TButton', background=[('active', '#11669e')])
-        estilos.configure('TEntry', font=('Segoe UI', 11), padding=5)
-        estilos.configure('Treeview', font=('Segoe UI', 9), rowheight=25)
-        estilos.configure('Treeview.Heading', font=('Segoe UI', 9, 'bold'))
-
-        topo = tk.Frame(self.root, bg=AZUL, height=81)
-        topo.pack(fill='x')
-        topo.pack_propagate(False)
-        tk.Label(topo, text='RPA SISREG  |  Conferência assistida', bg=AZUL,
-                 fg='white', font=('Segoe UI', 17, 'bold')).pack(anchor='w', padx=23, pady=(12, 0))
-        tk.Label(topo, text='Versão 0.2 · PDF + Planilha + SISREG  |  Processamento local',
-                 bg=AZUL, fg='#cce7fa', font=('Segoe UI', 10)).pack(anchor='w', padx=24)
-
-        corpo = ttk.Frame(self.root, padding=13)
-        corpo.pack(fill='both', expand=True)
-        self.abas = ttk.Notebook(corpo)
-        self.abas.pack(fill='both', expand=True)
-        self.tab_arquivos = ttk.Frame(self.abas, padding=12)
-        self.tab_sisreg = ttk.Frame(self.abas, padding=15)
-        self.tab_saida = ttk.Frame(self.abas, padding=15)
-        self.abas.add(self.tab_arquivos, text='  1  Arquivos e AIHs  ')
-        self.abas.add(self.tab_sisreg, text='  2  Consulta SISREG  ')
-        self.abas.add(self.tab_saida, text='  3  Planilha de saída  ')
-
-        arqs = self.tab_arquivos
-        ttk.Label(arqs, text='Importe os dados antes de abrir a sessão SISREG.',
-                  font=('Segoe UI', 11, 'bold')).pack(anchor='w', pady=(0, 10))
-        faixa = ttk.Frame(arqs)
-        faixa.pack(fill='x')
-        ttk.Button(faixa, text='Escolher XLSX do hospital', command=self._escolher_xlsx).pack(side='left')
-        self.lbl_xlsx = ttk.Label(faixa, text='Nenhum XLSX escolhido')
-        self.lbl_xlsx.pack(side='left', padx=12)
-        faixa_pdf = ttk.Frame(arqs)
-        faixa_pdf.pack(fill='x', pady=(7, 7))
-        ttk.Button(faixa_pdf, text='Escolher espelho PDF (opcional)', command=self._escolher_pdf).pack(side='left')
-        self.lbl_pdf = ttk.Label(faixa_pdf, text='Não informado')
-        self.lbl_pdf.pack(side='left', padx=12)
-        faixa_ctrl = ttk.Frame(arqs)
-        faixa_ctrl.pack(fill='x', pady=(5, 8))
-        self.btn_preparar = ttk.Button(faixa_ctrl, text='Preparar conferência',
-                                       style='Acao.TButton', command=self._preparar)
+    def _montar(self):
+        estilo=ttk.Style();estilo.theme_use('clam')
+        estilo.configure('TFrame',background=FUNDO)
+        estilo.configure('TLabel',background=FUNDO,foreground='#183b59',font=('Segoe UI',10))
+        estilo.configure('TButton',font=('Segoe UI',10),padding=8)
+        estilo.configure('Acao.TButton',background=AZUL,foreground='#ffffff',font=('Segoe UI',10,'bold'),padding=9)
+        estilo.map('Acao.TButton',background=[('active','#11669e')])
+        estilo.configure('TEntry',font=('Segoe UI',11),padding=5)
+        estilo.configure('Treeview',font=('Segoe UI',9),rowheight=24)
+        estilo.configure('Treeview.Heading',font=('Segoe UI',9,'bold'))
+        topo=tk.Frame(self.root,bg=AZUL,height=77);topo.pack(fill='x');topo.pack_propagate(False)
+        tk.Label(topo,text='RPA SISREG  |  Conferência em lote',bg=AZUL,fg='white',
+                 font=('Segoe UI',17,'bold')).pack(anchor='w',padx=24,pady=(10,0))
+        tk.Label(topo,text='v0.3 · Planilha hospitalar atualizada com backup · SISREG somente leitura',
+                 bg=AZUL,fg='#d4e8f7',font=('Segoe UI',10)).pack(anchor='w',padx=24)
+        corpo=ttk.Frame(self.root,padding=13);corpo.pack(fill='both',expand=True)
+        self.abas=ttk.Notebook(corpo);self.abas.pack(fill='both',expand=True)
+        a=ttk.Frame(self.abas,padding=12);b=ttk.Frame(self.abas,padding=12);c=ttk.Frame(self.abas,padding=12)
+        self.abas.add(a,text='  1  Planilha e PDF  ')
+        self.abas.add(b,text='  2  Pesquisa em lote SISREG  ')
+        self.abas.add(c,text='  3  Solicitações (próxima etapa)  ')
+        ttk.Label(a,text='Os CPFs do PDF são gravados diretamente na planilha. Um backup é criado antes da primeira alteração.',
+                  wraplength=950,font=('Segoe UI',10,'bold')).pack(anchor='w',pady=(0,10))
+        fx=ttk.Frame(a);fx.pack(fill='x')
+        ttk.Button(fx,text='Escolher XLSX do hospital',command=self._escolher_xlsx).pack(side='left')
+        self.lbl_xlsx=ttk.Label(fx,text='Nenhum arquivo escolhido');self.lbl_xlsx.pack(side='left',padx=12)
+        fp=ttk.Frame(a);fp.pack(fill='x',pady=8)
+        ttk.Button(fp,text='Escolher espelho PDF',command=self._escolher_pdf).pack(side='left')
+        self.lbl_pdf=ttk.Label(fp,text='PDF opcional');self.lbl_pdf.pack(side='left',padx=12)
+        fprep=ttk.Frame(a);fprep.pack(fill='x',pady=(2,9))
+        self.btn_preparar=ttk.Button(fprep,text='Preparar e atualizar CPFs na planilha',
+                                    command=self._preparar,style='Acao.TButton')
         self.btn_preparar.pack(side='left')
-        ttk.Label(faixa_ctrl, textvariable=self.resumo).pack(side='left', padx=12)
+        ttk.Label(fprep,textvariable=self.resumo,wraplength=600).pack(side='left',padx=14)
+        grade=ttk.Frame(a);grade.pack(fill='both',expand=True)
+        cfg=[('aba','Aba',130),('linha','Linha',52),('aih','AIH',122),('paciente','Paciente',240),
+             ('cpf','CPF',109),('cns','CNS',140),('situacao','Situação',260)]
+        self.tabela=ttk.Treeview(grade,columns=[x[0] for x in cfg],show='headings')
+        for chave,titulo,w in cfg:
+            self.tabela.heading(chave,text=titulo)
+            self.tabela.column(chave,width=w,minwidth=45,stretch=(chave=='paciente'))
+        scroll=ttk.Scrollbar(grade,orient='vertical',command=self.tabela.yview)
+        self.tabela.configure(yscrollcommand=scroll.set)
+        self.tabela.pack(side='left',fill='both',expand=True);scroll.pack(side='right',fill='y')
+        ttk.Label(a,text='Não sobrescrevemos CPFs ou CNS existentes quando houver divergência. '
+                  'O processo em lote não exige seleção individual de pacientes.',wraplength=930).pack(anchor='w',pady=(7,0))
+        ttk.Label(b,text='Etapa 2 — Consulta de todos os CPFs válidos no SISREG',
+                  font=('Segoe UI',12,'bold')).pack(anchor='w',pady=(0,8))
+        fc=ttk.Frame(b);fc.pack(fill='x',pady=(0,7))
+        ttk.Label(fc,text='Usuário institucional').grid(row=0,column=0,sticky='w')
+        ttk.Label(fc,text='Senha (não armazenada)').grid(row=0,column=1,sticky='w',padx=(12,0))
+        ttk.Label(fc,text='Navegador').grid(row=0,column=2,sticky='w',padx=(12,0))
+        ttk.Entry(fc,textvariable=self.usuario,width=25).grid(row=1,column=0,sticky='ew',pady=3)
+        ttk.Entry(fc,textvariable=self.senha,show='•',width=25).grid(row=1,column=1,sticky='ew',padx=(12,0),pady=3)
+        ttk.Combobox(fc,textvariable=self.navegador,state='readonly',width=19,
+                     values=['Google Chrome','Microsoft Edge']).grid(row=1,column=2,sticky='ew',padx=(12,0),pady=3)
+        fc.columnconfigure(0,weight=2);fc.columnconfigure(1,weight=2);fc.columnconfigure(2,weight=1)
+        self.btn_login=ttk.Button(b,text='Abrir SISREG e entrar',style='Acao.TButton',command=self._iniciar_login)
+        self.btn_login.pack(anchor='w',pady=(0,7))
+        ttk.Checkbutton(b,text='Confirmei visualmente o acesso no SISREG',
+                        variable=self.login_confirmado).pack(anchor='w')
+        ttk.Separator(b,orient='horizontal').pack(fill='x',pady=12)
+        fexec=ttk.Frame(b);fexec.pack(fill='x')
+        ttk.Label(fexec,text='Tamanho do lote:').pack(side='left')
+        ttk.Combobox(fexec,textvariable=self.limite,state='readonly',width=14,
+                     values=['5','20','50','Todos']).pack(side='left',padx=10)
+        self.btn_lote=ttk.Button(fexec,text='Iniciar pesquisa dos CNS em lote',
+                                 style='Acao.TButton',command=self._iniciar_lote)
+        self.btn_lote.pack(side='left',padx=(0,8))
+        self.btn_pausa=ttk.Button(fexec,text='Pausar',command=self._pausar)
+        self.btn_pausa.pack(side='left',padx=(0,8))
+        ttk.Button(fexec,text='Tentar salvar',command=self._tentar_salvar).pack(side='left',padx=(0,8))
+        ttk.Button(fexec,text='Interromper',command=self._interromper).pack(side='left')
+        ttk.Label(b,textvariable=self.progresso,font=('Segoe UI',12,'bold')).pack(anchor='w',pady=(22,10))
+        self.barra=ttk.Progressbar(b,mode='determinate',maximum=100,value=0)
+        self.barra.pack(fill='x')
+        ttk.Label(b,text='O RPA pesquisa CPF por CPF. Só grava CNS quando o resultado mostra nome '
+                  'inequívoco e um único CNS identificado. Resultados ambíguos viram pendência; '
+                  'o robô segue para o próximo paciente. Não acessa a etapa de solicitações agora.',
+                  wraplength=930).pack(anchor='w',pady=(15,0))
+        ttk.Label(b,text='A planilha é salva ao longo do lote. Feche-a no Excel antes de iniciar; '
+                  'o programa interrompe a gravação se detectar edição externa ou bloqueio do arquivo.',
+                  wraplength=930).pack(anchor='w',pady=(12,0))
+        ttk.Label(c,text='Consulta Amb → Solicitações',font=('Segoe UI',13,'bold')).pack(anchor='w',pady=(0,10))
+        ttk.Label(c,text='Ainda não automatizada. Concluiremos e homologaremos primeiro o cadastro/CNS '
+                  'em lote. Pesquisa de solicitações depende de novos seletores da tela de resultados '
+                  'e será implementada separadamente.',wraplength=920).pack(anchor='w')
+        rodape=ttk.Frame(corpo);rodape.pack(fill='x',pady=(10,0))
+        ttk.Label(rodape,textvariable=self.status,wraplength=910).pack(side='left',fill='x',expand=True)
+        ttk.Button(rodape,text='Encerrar',command=self.encerrar).pack(side='right')
 
-        tabela_container = ttk.Frame(arqs)
-        tabela_container.pack(fill='both', expand=True)
-        cols = ('aba', 'linha', 'aih', 'paciente', 'cpf', 'cns', 'situacao')
-        self.tabela = ttk.Treeview(tabela_container, columns=cols, show='headings', selectmode='browse')
-        config = [('aba','Aba',145),('linha','Linha',53),('aih','AIH',130),
-                  ('paciente','Paciente',210),('cpf','CPF',110),('cns','CNS',143),
-                  ('situacao','Situação',188)]
-        for chave, titulo, largura in config:
-            self.tabela.heading(chave, text=titulo)
-            self.tabela.column(chave, width=largura, minwidth=45, stretch=(chave=='paciente'))
-        barra = ttk.Scrollbar(tabela_container, orient='vertical', command=self.tabela.yview)
-        self.tabela.configure(yscrollcommand=barra.set)
-        self.tabela.pack(side='left', fill='both', expand=True)
-        barra.pack(side='right', fill='y')
-        self.tabela.bind('<<TreeviewSelect>>', self._ao_selecionar)
-        ttk.Label(arqs, text='Selecione uma linha e abra a etapa 2 para pesquisar o paciente. '
-                  'A AIH com hífen e sem hífen é tratada como o mesmo identificador.',
-                  wraplength=890).pack(anchor='w', pady=(6, 0))
-
-        tab = self.tab_sisreg
-        ttk.Label(tab, textvariable=self.selecionado, font=('Segoe UI', 12, 'bold')).pack(anchor='w', pady=(0, 12))
-        form = ttk.Frame(tab)
-        form.pack(fill='x', pady=(0, 8))
-        ttk.Label(form, text='Usuário SISREG').grid(row=0, column=0, sticky='w')
-        ttk.Label(form, text='Senha (apenas em memória)').grid(row=0, column=1, sticky='w', padx=(12, 0))
-        ttk.Entry(form, textvariable=self.usuario, width=25).grid(row=1, column=0, sticky='ew', pady=(3, 8))
-        ttk.Entry(form, textvariable=self.senha, show='•', width=25).grid(row=1, column=1, sticky='ew', padx=(12, 0), pady=(3, 8))
-        ttk.Label(form, text='Navegador').grid(row=0, column=2, sticky='w', padx=(12, 0))
-        ttk.Combobox(form, textvariable=self.navegador, state='readonly',
-                     values=['Microsoft Edge','Google Chrome'], width=18).grid(row=1, column=2, padx=(12, 0), pady=(3, 8))
-        form.columnconfigure(0, weight=1)
-        form.columnconfigure(1, weight=1)
-        self.btn_login = ttk.Button(tab, text='Abrir SISREG e enviar login',
-                                    style='Acao.TButton', command=self._iniciar_login)
-        self.btn_login.pack(anchor='w', pady=(0, 6))
-        ttk.Checkbutton(tab, text='Confirmei que o SISREG aceitou meu login no navegador',
-                        variable=self.login_confirmado).pack(anchor='w', pady=(1, 10))
-        ttk.Separator(tab, orient='horizontal').pack(fill='x', pady=(1, 9))
-        ttk.Label(tab, text='Consulta 1 — Cadastro pelo CPF ou CNS',
-                  font=('Segoe UI', 11, 'bold')).pack(anchor='w')
-        ttk.Label(tab, text='Usa o identificador presente na planilha/PDF. O SISREG abre no navegador; '
-                  'confira o nome e o CNS manualmente. Não há captura automática desses dados nesta etapa.',
-                  wraplength=860).pack(anchor='w', pady=(3, 6))
-        ttk.Button(tab, text='Pesquisar cadastro do paciente',
-                   command=self._consulta_cadastro).pack(anchor='w', pady=(0, 9))
-        confirmacao = ttk.Frame(tab)
-        confirmacao.pack(fill='x', pady=2)
-        ttk.Label(confirmacao, text='CNS visualizado no SISREG:').grid(row=0, column=0, sticky='w')
-        ttk.Entry(confirmacao, textvariable=self.cns_confirmado, width=27).grid(row=1, column=0, sticky='w', pady=(3, 4))
-        ttk.Checkbutton(confirmacao, text='Conferi o nome do paciente no SISREG',
-                        variable=self.identidade_confirmada).grid(row=1, column=1, sticky='w', padx=(16, 0))
-        ttk.Button(tab, text='Confirmar CNS para esta AIH',
-                   command=self._confirmar_cns).pack(anchor='w', pady=(5, 10))
-        ttk.Separator(tab, orient='horizontal').pack(fill='x', pady=(1, 8))
-        ttk.Label(tab, text='Consulta 2 — Consulta Amb → Solicitações',
-                  font=('Segoe UI', 11, 'bold')).pack(anchor='w')
-        ttk.Label(tab, text='Após confirmar o CNS, navega até Solicitações, preenche o CNS e abre a pesquisa. '
-                  'Ainda NÃO interpreta nem confirma solicitações.', wraplength=860).pack(anchor='w', pady=(3, 6))
-        ttk.Button(tab, text='Pesquisar solicitações pelo CNS', style='Acao.TButton',
-                   command=self._consultar_solicitacoes).pack(anchor='w', pady=(0, 5))
-
-        saida = self.tab_saida
-        ttk.Label(saida, text='Salvar uma cópia enriquecida da planilha do hospital',
-                  font=('Segoe UI', 12, 'bold')).pack(anchor='w', pady=(0, 8))
-        ttk.Label(saida, text='Preserva as três abas e as sete colunas originais. '
-                  'Adiciona cinco colunas de rastreabilidade à direita; completa somente CPF/CNS '
-                  'vazios e verificados, sem sobrescrever valores conflitantes. '
-                  'A pesquisa de solicitações fica registrada apenas como ABERTA, não como confirmada.',
-                  wraplength=845).pack(anchor='w', pady=(0, 15))
-        ttk.Button(saida, text='Salvar cópia XLSX com as conferências',
-                   style='Acao.TButton', command=self._salvar).pack(anchor='w')
-        ttk.Label(saida, text='A planilha contém dados sensíveis. Salve apenas em pasta institucional '
-                  'autorizada; o arquivo não possui criptografia automática.',
-                  wraplength=845).pack(anchor='w', pady=(17, 0))
-
-        rodape = ttk.Frame(corpo)
-        rodape.pack(fill='x', pady=(9, 1))
-        ttk.Label(rodape, textvariable=self.status, wraplength=880).pack(side='left', fill='x', expand=True)
-        ttk.Button(rodape, text='Encerrar', command=self.encerrar).pack(side='right')
-
-    def _escolher_xlsx(self) -> None:
-        f = filedialog.askopenfilename(title='Planilha-padrão do hospital',
-                                       filetypes=[('Excel XLSX', '*.xlsx')])
-        if f:
-            self.arquivo_planilha = Path(f)
+    def _escolher_xlsx(self):
+        arq=filedialog.askopenfilename(title='Planilha-padrão',filetypes=[('Excel','*.xlsx')])
+        if arq:
+            self.arquivo_planilha=Path(arq)
             self.lbl_xlsx.configure(text=self.arquivo_planilha.name)
-
-    def _escolher_pdf(self) -> None:
-        f = filedialog.askopenfilename(title='Espelho de AIH em PDF (opcional)',
-                                       filetypes=[('PDF', '*.pdf')])
-        if f:
-            self.arquivo_pdf = Path(f)
+    def _escolher_pdf(self):
+        arq=filedialog.askopenfilename(title='Espelho de AIH',filetypes=[('PDF','*.pdf')])
+        if arq:
+            self.arquivo_pdf=Path(arq)
             self.lbl_pdf.configure(text=self.arquivo_pdf.name)
 
-    def _preparar(self) -> None:
-        if self.carregando:
-            return
+    def _preparar(self):
+        if self.carregando or self.processando:return
         if not self.arquivo_planilha:
-            self.status.set('Selecione primeiro a planilha XLSX.')
-            return
-        self.carregando = True
-        self.btn_preparar.configure(state='disabled')
-        self.status.set('Lendo planilha e indexando PDF localmente...')
+            self.status.set('Selecione o XLSX hospitalar.');return
+        self.carregando=True;self.btn_preparar.configure(state='disabled')
+        self.status.set('Indexando PDF e preparando atualização com backup...')
         def tarefa():
             try:
-                sessao = SessaoPlanilha()
+                sessao=SessaoPlanilha()
                 sessao.carregar(self.arquivo_planilha)
-                info = 'Sem PDF.'
+                informacao='PDF não informado.'
                 if self.arquivo_pdf:
-                    index, avisos = ler_espelhos_pdf(self.arquivo_pdf)
-                    sessao.complementar_pdf(index, self.arquivo_pdf)
-                    info = f'{len(index)} AIHs indexadas no PDF.'
-                    if avisos:
-                        info += ' PDF sem espelhos pesquisáveis ou estrutura não reconhecida.'
-                self.eventos.put(('preparado', (sessao, info)))
-            except Exception as exc:
-                self.eventos.put(('erro_preparo', str(exc)))
-        threading.Thread(target=tarefa, daemon=True).start()
+                    ix,avisos=ler_espelhos_pdf(self.arquivo_pdf)
+                    sessao.complementar_pdf(ix,self.arquivo_pdf)
+                    informacao=f'{len(ix)} AIHs indexadas no espelho.'
+                    if avisos: informacao+=' Estrutura do PDF requer revisão.'
+                gravacao=sessao.salvar_na_planilha(motivo='pdf')
+                self.eventos.put(('preparado',(sessao,informacao,gravacao)))
+            except Exception as e:
+                self.eventos.put(('erro_preparo',str(e)))
+        threading.Thread(target=tarefa,daemon=True).start()
 
-    def _atualizar_tabela(self) -> None:
-        selecionar = self.tabela.selection()
-        manter = selecionar[0] if selecionar else None
-        for iid in self.tabela.get_children():
-            self.tabela.delete(iid)
-        for indice, r in enumerate(self.sessao.registros):
-            self.tabela.insert('', 'end', iid=str(indice), values=(
-                r.aba, r.linha, r.aih, r.nome, r.cpf, r.cns, r.situacao
-            ))
-        if manter and self.tabela.exists(manter):
-            self.tabela.selection_set(manter)
+    def _atualizar_tabela(self):
+        itens=self.tabela.get_children()
+        if itens:self.tabela.delete(*itens)
+        for i,r in enumerate(self.sessao.registros):
+            self.tabela.insert('','end',iid=str(i),values=(r.aba,r.linha,r.aih,r.nome,r.cpf,r.cns,r.situacao))
 
-    def _registro(self):
-        s = self.tabela.selection()
-        if not s:
-            raise ValueError('Selecione uma AIH na tabela da etapa 1.')
-        return self.sessao.registros[int(s[0])]
-
-    def _ao_selecionar(self, _ev=None) -> None:
-        try:
-            r = self._registro()
-            self.selecionado.set(f'{r.nome}   |   AIH {r.aih}   |   {r.aba}, linha {r.linha}')
-            self.cns_confirmado.set(r.cns)
-            self.identidade_confirmada.set(False)
-        except Exception:
-            pass
-
-    def _iniciar_login(self) -> None:
+    def _iniciar_login(self):
         if self.thread_navegador and self.thread_navegador.is_alive():
-            self.status.set('Já existe uma sessão de navegador ativa.')
-            return
-        u, s = self.usuario.get().strip(), self.senha.get()
+            self.status.set('Já há um navegador ativo.');return
+        u=self.usuario.get().strip();s=self.senha.get()
         if not u or not s:
-            self.status.set('Preencha usuário e senha; serão apagados dos campos ao iniciar.')
-            return
-        canal = 'msedge' if self.navegador.get() == 'Microsoft Edge' else 'chrome'
-        self.usuario.set('')
-        self.senha.set('')
-        self.parar.clear()
-        self.browser_ready = False
-        self.login_confirmado.set(False)
-        self.thread_navegador = threading.Thread(
-            target=self._navegador_worker, args=(u, s, canal), daemon=True)
-        self.thread_navegador.start()
-        self.status.set('Abrindo navegador e aguardando os controles de login...')
+            self.status.set('Preencha usuário e senha para abrir o SISREG.');return
+        canal='chrome' if self.navegador.get()=='Google Chrome' else 'msedge'
+        self.usuario.set('');self.senha.set('');self.parar.clear()
+        self.browser_ready=False;self.login_confirmado.set(False)
+        self.thread_navegador=threading.Thread(target=self._navegador_worker,args=(u,s,canal),daemon=True)
+        self.thread_navegador.start();self.status.set('Abrindo SISREG...')
 
-    def _navegador_worker(self, usuario: str, senha: str, canal: str) -> None:
-        browser = None
+    def _navegador_worker(self,usuario,senha,canal):
+        browser=None
         try:
             with sync_playwright() as p:
-                browser = p.chromium.launch(channel=canal, headless=False)
-                contexto = browser.new_context(accept_downloads=False)
-                pagina = contexto.new_page()
+                browser=p.chromium.launch(channel=canal,headless=False)
+                contexto=browser.new_context(accept_downloads=False)
+                pagina=contexto.new_page()
                 try:
-                    pagina.goto(URL_SISREG, wait_until='domcontentloaded', timeout=45000)
-                    submeter_login(pagina, usuario, senha)
-                    self.eventos.put(('login_enviado', None))
+                    pagina.goto(URL_SISREG,wait_until='domcontentloaded',timeout=45000)
+                    submeter_login(pagina,usuario,senha)
+                    self.eventos.put(('login_enviado',None))
+                    # Detecção pós-login sem enviar segundo login; qualquer verificação manual mantém-se possível.
+                    if autenticao_ativa(pagina,timeout=14000):
+                        self.eventos.put(('autenticado',None))
                 except Exception:
-                    self.eventos.put(('erro_login', 'Não foi possível enviar o login. '
-                                      'Verifique a página no navegador; nenhum login foi confirmado.'))
-                    return
+                    self.eventos.put(('erro_login','Login ou acesso indisponível. Verifique a página no navegador.'))
                 finally:
-                    usuario = ''
-                    senha = ''
-                while not self.parar.wait(0.1):
-                    try:
-                        cmd, identificador, idx = self.comandos.get(timeout=0.2)
-                    except queue.Empty:
-                        continue
-                    try:
-                        if not browser.is_connected():
-                            raise NavegacaoInesperada('O navegador foi fechado.')
-                        # Quando o site abriu uma nova aba, só usar página oficial.
-                        validas = [pg for pg in contexto.pages if endereco_oficial(pg.url) and not pg.is_closed()]
-                        if not validas:
-                            raise NavegacaoInesperada('Página oficial não encontrada na sessão.')
-                        pagina = validas[-1]
-                        if cmd == 'cadastro':
-                            consultar_cadastro(pagina, identificador)
-                            self.eventos.put(('cadastro_aberto', idx))
-                        elif cmd == 'solicitacoes':
-                            consultar_solicitacoes_amb(pagina, identificador)
-                            self.eventos.put(('solicitacoes_abertas', idx))
-                    except Exception:
-                        self.eventos.put(('erro_navegacao',
-                             'A tela esperada não foi localizada, ou o SISREG não respondeu. '
-                             'Confira o navegador; o robô não prosseguiu automaticamente.'))
+                    usuario='';senha=''
+                while not self.parar.is_set():
+                    try: cmd,payload=self.comandos.get(timeout=0.2)
+                    except queue.Empty:continue
+                    if cmd!='lote':continue
+                    indices=payload
+                    self.eventos.put(('lote_iniciado',len(indices)))
+                    erros_seguidos=0
+                    for j,idx in enumerate(indices,1):
+                        if self.parar.is_set():break
+                        while self.pausa.is_set() and not self.parar.wait(0.25):pass
+                        if self.parar.is_set():break
+                        r=self.sessao.registros[idx]
+                        identificador=r.cpf
+                        try:
+                            validas=[pg for pg in contexto.pages if not pg.is_closed() and endereco_oficial(pg.url)]
+                            if not validas:raise NavegacaoInesperada('Sessão SISREG encerrada.')
+                            # Pesquisa sempre no contexto oficial; nunca cadastra nem altera solicitações.
+                            pagina=validas[-1]
+                            consultar_cadastro(pagina,identificador)
+                            cns,motivo=ler_resultado_cadastro(pagina,r.nome,identificador,espera=7500)
+                            erros_seguidos=0
+                        except Exception as exc:
+                            cns,motivo=None,'FALHA_DE_NAVEGACAO_OU_TEMPO'
+                            erros_seguidos+=1
+                            self.eventos.put(('diagnostico_navegacao',type(exc).__name__ + ': ' + str(exc)[:180]))
+                        self.eventos.put(('lote_item',(idx,cns,motivo,j,len(indices))))
+                        if erros_seguidos>=3:
+                            self.eventos.put(('lote_alerta','Três falhas consecutivas de navegação. Lote suspenso para verificar tela/seletores.'))
+                            break
+                        # Intervalo deliberado para não sobrecarregar o sistema público.
+                        self.parar.wait(1.8)
+                    self.eventos.put(('lote_fim',len(indices)))
         except Exception:
-            self.eventos.put(('erro_login', 'Falha ao abrir navegador. Confira Edge/Chrome e liberação da TI.'))
+            self.eventos.put(('erro_login','Não foi possível iniciar o navegador autorizado.'))
         finally:
-            if browser is not None:
-                try:
-                    browser.close()
-                except Exception:
-                    pass
-            self.eventos.put(('navegador_parou', None))
+            if browser:
+                try: browser.close()
+                except Exception:pass
+            self.eventos.put(('navegador_parou',None))
 
-    def _consulta_cadastro(self) -> None:
-        try:
-            r = self._registro()
-            if not self.browser_ready or not self.login_confirmado.get():
-                raise ValueError('Primeiro abra o SISREG e confirme o login no navegador.')
-            if not r.aih or not r.nome:
-                raise ValueError('AIH e nome são necessários para a conferência.')
-            id = r.cpf if cpf_valido(r.cpf) else (r.cns if cns_formato(r.cns) else '')
-            if not id:
-                raise ValueError('Não há CPF válido nem CNS para pesquisa. Revise o espelho da AIH.')
-            idx = self.sessao.registros.index(r)
-            self.comandos.put(('cadastro', id, idx))
-            self.status.set('Pesquisando o cadastro no SISREG; confira o nome e o CNS no navegador.')
-        except ValueError as exc:
-            self.status.set(str(exc))
-
-    def _confirmar_cns(self) -> None:
-        try:
-            r = self._registro()
-            if not self.browser_ready or not self.login_confirmado.get():
-                raise ValueError('Confirme primeiro o login no navegador.')
-            self.sessao.confirmar_cns_manual(r, self.cns_confirmado.get(),
-                                             self.identidade_confirmada.get())
-            self._atualizar_tabela()
-            self.status.set('CNS conferido e associado à AIH em memória. Salve a cópia XLSX depois.')
-        except ValueError as exc:
-            self.status.set(str(exc))
-
-    def _consultar_solicitacoes(self) -> None:
-        try:
-            r = self._registro()
-            if not self.browser_ready or not self.login_confirmado.get():
-                raise ValueError('Abra e confirme a sessão SISREG primeiro.')
-            if not r.revisado or not cns_formato(r.cns):
-                raise ValueError('Confirme manualmente a identidade e o CNS antes de continuar.')
-            idx = self.sessao.registros.index(r)
-            self.comandos.put(('solicitacoes', r.cns, idx))
-            self.status.set('Abrindo pesquisa de solicitações pelo CNS. Resultado exige análise humana.')
-        except ValueError as exc:
-            self.status.set(str(exc))
-
-    def _salvar(self) -> None:
+    def _iniciar_lote(self):
+        if self.processando:
+            self.status.set('Já há um lote em execução.');return
         if not self.sessao.origem:
-            self.status.set('Prepare primeiro a planilha.')
-            return
-        nome = self.sessao.origem.stem + '_RPA_CONFERENCIA.xlsx'
-        destino = filedialog.asksaveasfilename(title='Salvar cópia — somente pasta institucional autorizada',
-                                                defaultextension='.xlsx', initialfile=nome,
-                                                filetypes=[('Planilha Excel','*.xlsx')])
-        if not destino:
-            return
-        try:
-            p = self.sessao.salvar_copia(destino)
-            self.status.set(f'Cópia salva: {p.name}. A planilha original foi preservada.')
-        except Exception as exc:
-            self.status.set('Falha ao salvar cópia: ' + str(exc))
+            self.status.set('Prepare a planilha e o PDF antes.');return
+        if not self.thread_navegador or not self.thread_navegador.is_alive() or not self.login_confirmado.get():
+            self.status.set('Faça login e confirme o acesso antes de pesquisar pacientes.');return
+        from aih_extract import cpf_valido
+        selecionados=[i for i,r in enumerate(self.sessao.registros) if cpf_valido(r.cpf)
+                     and r.aih and r.nome and not r.cns and not r.situacao.startswith('PENDENTE_')
+                     and r.situacao not in ('CPF_CONFLITANTE_PDF','ESPELHOS_CONFLITANTES','NOME_DIVERGENTE_ESPELHO')]
+        if not selecionados:
+            self.status.set('Não há CPF pendente elegível neste lote.');return
+        numero=self.limite.get()
+        if numero!='Todos':selecionados=selecionados[:int(numero)]
+        self.processando=True;self.persistencia_falhou=False;self.navegacao_falhou=False;self.pausa.clear();self.parar.clear()
+        self.dados_atuais={'cpf':0,'cns':0,'pendentes':0,'falhas':0,'total':len(selecionados)}
+        self.barra.configure(value=0)
+        self.btn_lote.configure(state='disabled')
+        self.comandos.put(('lote',selecionados))
+        self.status.set(f'Lote iniciado com {len(selecionados)} pesquisas, sem interação linha a linha.')
+    def _pausar(self):
+        if not self.processando:return
+        if self.pausa.is_set():
+            self.pausa.clear();self.btn_pausa.configure(text='Pausar')
+        else:
+            self.pausa.set();self.btn_pausa.configure(text='Retomar')
+    def _interromper(self):
+        # Interrompe o processo e encerra o navegador, evitando pesquisas sem supervisão.
+        self.parar.set();self.pausa.clear()
+        self.status.set('Solicitada interrupção; os resultados recebidos serão salvos.')
 
-    def _ler_eventos(self) -> None:
+    def _salvar_checkpoint(self):
+        try:
+            saida=self.sessao.salvar_na_planilha(motivo='lote_cns')
+            return True
+        except Exception as e:
+            self.persistencia_falhou=True
+            self.parar.set()
+            self.pausa.clear()
+            self.status.set('FALHA DE SALVAMENTO: '+str(e)+'. A execução foi interrompida; não feche antes de recuperar os resultados.')
+            return False
+
+    def _tentar_salvar(self):
+        if self._salvar_checkpoint():
+            self.persistencia_falhou=False
+            self.status.set('Alterações salvas na planilha hospitalar.')
+
+    def _ler_eventos(self):
         try:
             while True:
-                evt, dado = self.eventos.get_nowait()
-                if evt == 'preparado':
-                    sessao, info = dado
-                    self.sessao = sessao
+                evento,dado=self.eventos.get_nowait()
+                if evento=='preparado':
+                    sessao,informacao,atualizacao=dado
+                    self.sessao=sessao
                     self._atualizar_tabela()
-                    self.resumo.set(f'{len(sessao.registros)} registros. {info}')
-                    self.status.set('Arquivos preparados. Selecione uma AIH e passe para a etapa 2.')
-                    self.carregando = False
-                    self.btn_preparar.configure(state='normal')
-                elif evt == 'erro_preparo':
-                    self.carregando = False
-                    self.btn_preparar.configure(state='normal')
-                    self.status.set('Não foi possível preparar: ' + str(dado))
-                elif evt == 'login_enviado':
-                    self.browser_ready = True
-                    self.status.set('Formulário enviado. Verifique o login no SISREG e marque a confirmação.')
-                elif evt == 'cadastro_aberto':
-                    self.status.set('Pesquisa de cadastro enviada. Confira paciente e CNS na página aberta.')
-                elif evt == 'solicitacoes_abertas':
-                    if isinstance(dado, int) and dado < len(self.sessao.registros):
-                        self.sessao.marcar_consulta_aberta(self.sessao.registros[dado])
-                        self._atualizar_tabela()
-                    self.status.set('Pesquisa de solicitações aberta. Ainda não houve conferência dos resultados.')
-                elif evt in ('erro_login', 'erro_navegacao'):
+                    self.resumo.set(f'{len(sessao.registros)} registros · {informacao} · '
+                                    f'{atualizacao["cpf"]} CPF(s) gravados.')
+                    self.status.set('Planilha original atualizada, com backup. Etapa 2 liberada.')
+                    self.carregando=False;self.btn_preparar.configure(state='normal')
+                elif evento=='erro_preparo':
+                    self.carregando=False;self.btn_preparar.configure(state='normal')
+                    self.status.set('Preparação não concluída: '+str(dado))
+                elif evento=='login_enviado':
+                    self.browser_ready=True
+                    self.status.set('Login enviado; confirme visualmente o acesso no navegador.')
+                elif evento=='autenticado':
+                    self.browser_ready=True;self.login_confirmado.set(True)
+                    self.status.set('Menu pós-login identificado. Você pode iniciar o lote SISREG.')
+                elif evento=='lote_iniciado':
+                    self.progresso.set(f'Iniciando pesquisas de {dado} pacientes...')
+                elif evento=='lote_item':
+                    idx,cns,motivo,contador,total=dado
+                    reg=self.sessao.registros[idx]
+                    self.sessao.registrar_cadastro_em_lote(reg,cns,motivo)
+                    if reg.situacao=='CNS_CONFIRMADO_SISREG':self.dados_atuais['cns']+=1
+                    else:self.dados_atuais['pendentes']+=1
+                    if motivo=='FALHA_DE_NAVEGACAO_OU_TEMPO':self.dados_atuais['falhas']+=1
+                    # Checkpoint a cada 10 linhas, sempre depois da confirmação objetiva.
+                    if contador%10==0:
+                        self._salvar_checkpoint()
+                    if self.tabela.exists(str(idx)):
+                        self.tabela.item(str(idx),values=(reg.aba,reg.linha,reg.aih,reg.nome,reg.cpf,reg.cns,reg.situacao))
+                    self.barra.configure(value=100*contador/max(total,1))
+                    self.progresso.set(f'{contador}/{total} consultados · '
+                                      f'{self.dados_atuais["cns"]} CNS seguros · '
+                                      f'{self.dados_atuais["pendentes"]} pendências')
+                elif evento=='lote_fim':
+                    self._salvar_checkpoint()
+                    self.processando=False;self.btn_lote.configure(state='normal')
+                    if not self.persistencia_falhou and not self.navegacao_falhou:
+                        self.status.set('Lote encerrado; atualizações gravadas na planilha hospitalar.')
+                    elif self.navegacao_falhou and not self.persistencia_falhou:
+                        self.status.set('Lote pausado após falhas consecutivas do SISREG. Dados anteriores gravados. Revise a navegação.')
+                    else:
+                        self.status.set('LOTE INTERROMPIDO: falha ao salvar. Feche o Excel, tente salvar novamente e confirme.')
+                elif evento=='lote_alerta':
+                    self.navegacao_falhou=True
                     self.status.set(str(dado))
-                elif evt == 'navegador_parou':
-                    self.browser_ready = False
-                    self.login_confirmado.set(False)
-        except queue.Empty:
-            pass
-        self.root.after(140, self._ler_eventos)
+                elif evento=='diagnostico_navegacao':
+                    self.status.set('Pesquisa SISREG pendente: '+str(dado))
+                elif evento=='erro_login':self.status.set(str(dado))
+                elif evento=='navegador_parou':
+                    self.browser_ready=False;self.login_confirmado.set(False)
+                    if self.processando:
+                        self._salvar_checkpoint()
+                        self.processando=False;self.btn_lote.configure(state='normal')
+        except queue.Empty:pass
+        self.root.after(140,self._ler_eventos)
 
-    def encerrar(self) -> None:
-        self.parar.set()
-        self.usuario.set('')
-        self.senha.set('')
-        self.root.after(270, self.root.destroy)
+    def encerrar(self):
+        self.parar.set();self.pausa.clear();self.usuario.set('');self.senha.set('')
+        # Caso o processo esteja ativo, a janela aguarda a gravação de resultados recebidos.
+        if self.persistencia_falhou and not self.processando:
+            from tkinter import messagebox
+            if not messagebox.askyesno('Alterações não salvas',
+                  'Há resultados ainda não gravados na planilha. Deseja sair e descartá-los?'):
+                return
+        if self.processando:
+            self.status.set('Interrompendo; aguarde o salvamento dos dados do lote...')
+            self.root.after(500,self._aguardar_encerramento)
+        else:
+            self.root.destroy()
+
+    def _aguardar_encerramento(self):
+        if self.processando:self.root.after(500,self._aguardar_encerramento)
+        else:self.root.destroy()
 
 
-def main() -> None:
-    janela = tk.Tk()
-    Aplicativo(janela)
-    janela.mainloop()
+def main():
+    root=tk.Tk()
+    Aplicativo(root)
+    root.mainloop()
 
-
-if __name__ == '__main__':
-    main()
+if __name__=='__main__':main()

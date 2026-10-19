@@ -117,6 +117,8 @@ class SessaoPlanilha:
             contagem[resultado] = contagem.get(resultado, 0) + 1
             r.origem_pdf = f'Página {e.pagina}' if e else ''
             if e is None:
+                if r.situacao in ('AIH_FORMATO_INVALIDO', 'CPF_HOSPITAL_INVALIDO', 'CNS_HOSPITAL_INVALIDO', 'NOME_NAO_INFORMADO'):
+                    continue
                 r.situacao = resultado
                 r.detalhe = 'Necessária revisão; nenhum identificador foi alterado.'
                 continue
@@ -137,6 +139,25 @@ class SessaoPlanilha:
                 r.detalhe = 'Registro de espelho correspondente pela AIH e nome.'
         return contagem
 
+    def registrar_cadastro_em_lote(self, registro: Registro, cns: str | None, motivo: str) -> None:
+        """Só aceita CNS obtido com paciente inequívoco; não substitui conflito."""
+        registro.atualizado_em = datetime.now().isoformat(timespec='seconds')
+        if cns:
+            numero = digitos(cns)
+            if not cns_formato(numero):
+                raise ValueError('CNS de resultado fora do padrão.')
+            if registro.cns and digitos(registro.cns) != numero:
+                registro.situacao = 'CNS_CONFLITO_SISREG'
+                registro.detalhe = 'CNS do cadastro diferente da planilha/PDF; análise humana requerida.'
+                return
+            registro.cns = numero
+            registro.situacao = 'CNS_CONFIRMADO_SISREG'
+            registro.detalhe = 'CNS recuperado com nome inequívoco na pesquisa do cadastro.'
+            registro.revisado = True
+        else:
+            registro.situacao = 'PENDENTE_' + (motivo[:80] or 'CONSULTA')
+            registro.detalhe = 'Cadastro pesquisado, mas identidade/CNS não puderam ser comprovados automaticamente.'
+
     def confirmar_cns_manual(self, registro: Registro, cns: str, identidade_confirmada: bool) -> None:
         numero = digitos(cns)
         if not identidade_confirmada:
@@ -154,6 +175,10 @@ class SessaoPlanilha:
     def marcar_consulta_aberta(self, registro: Registro) -> None:
         registro.consulta_ambulatorial = 'PESQUISA_ABERTA_NAVEGADOR_SEM_VALIDACAO_DE_RESULTADOS'
         registro.atualizado_em = datetime.now().isoformat(timespec='seconds')
+
+    def salvar_na_planilha(self, motivo='lote'):
+        from persistencia import gravar_na_origem
+        return gravar_na_origem(self, motivo=motivo)
 
     def salvar_copia(self, destino: str | Path) -> Path:
         from openpyxl import load_workbook

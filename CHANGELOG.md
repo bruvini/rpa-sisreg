@@ -1,17 +1,15 @@
-# Histórico de mudanças
+# Changelog
 
-## 0.2.0 — leitura do espelho e consulta ambulatorial assistida
+## v0.3.0 — CPF e CNS em lote
+- Preserva interface local com 3 etapas e simplifica o fluxo para operação por lote.
+- Leitura do espelho e atualização automática da própria XLSX (não apenas cópia).
+- Backup antes da primeira gravação, hashes, gravação atômica e controle de edição externa.
+- Pesquisa múltipla por CPF no SISREG, com botão `btn_pesquisar` identificado pelo nome e `onclick`.
+- Procura campo de pesquisa também em frames internos oficiais; verifica presença real do formulário antes de avançar.
+- Só associa CNS quando o resultado mostrar nome inequívoco e CNS rotulado único; demais registros permanecem pendentes.
+- Lotes de 5, 20, 50 ou todos, com pausa, checkpoints, retomada e pausa por 3 falhas consecutivas.
+- Consulta Amb → Solicitações permanece fora do escopo desta versão.
+- Testes com pacientes e AIHs **inteiramente fictícios**.
 
-- Mantém as mesmas funções de segurança da autenticação da v0.1.
-- Inclui seletor da planilha hospitalar XLSX e do PDF SIHD2 textual opcional.
-- Indexação da AIH removendo apenas pontuação do dígito verificador; exige 13 dígitos.
-- Identidade confirmada por AIH e nome antes de usar documentos do PDF.
-- Separação de CPF e CNS, sem inferir um a partir do outro.
-- Pesquisa por CPF/CNS e, após confirmação da operadora, navegação até solicitações ambulatoriais.
-- Salva cópia XLSX com campos e estado da auditoria, sem sobrescrever origem.
-- Suspende a automação na página de resultados para homologação dos seletores e regras.
-- Amplia a suíte para 24 testes locais sintéticos.
-
-## 0.1.0 — login assistido
-
-- Janela de usuário, senha e seleção Edge/Chrome; autenticação pelo formulário SISREG em navegador visível.
+## v0.2.0 — PDF e consulta individual assistida
+- Preservada no histórico do GitHub para rollback.

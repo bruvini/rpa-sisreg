@@ -1,11 +1,14 @@
-# Relatório de validação técnica — RPA SISREG v0.2
+# Relatório de testes v0.3
 
-- 24 testes automatizados **aprovados** em execução Linux isolada (nenhum acesso ao SISREG).
-- PDF fictício textual gerado no teste: leitura por AIH `900000000012-3` e correspondência com `9000000000123`.
-- Confirmação negativa: nome divergente, espelho conflituoso e CPF inválido não promovem dados automaticamente.
-- Importação da planilha de três abas/cabeçalhos e exportação de uma cópia XLSX testadas.
-- Teste do browser por mocks: abertura das opções do menu ambulatorial e submissão de CNS, sem leitura de resposta.
-- Janela Tkinter aberta em display gráfico isolado (Linux, sem navegador conectado).
-- Não foi fornecido PDF SIHD2 real para validação; sua leitura depende de teste de homologação.
-- Não foi efetuada consulta em sessão SISREG real; credenciais e dados de pacientes **não** foram utilizados.
-- EXE Windows ainda precisa de compilação no GitHub Actions e autorização/execução local pela TI.
+Data: 19/10/2026. Nenhum acesso ao SISREG real foi realizado nesta homologação automatizada.
+
+- **33 testes unitários e de integração sintéticos: aprovados**.
+- Arquivo XLSX simulado, PDF textual de espelho simulado, AIH com e sem hífen.
+- Backup e alterações na planilha original testados; persistência de CPF/CNS e conservação das abas A:G.
+- Alteração externa antes de salvar detectada e bloqueada; CNS divergente não substituído.
+- Texto de resposta simulado: CNS único com nome/CPF compatíveis aceita; CNS múltiplos, nome distinto ou CPF diferente resultam pendentes.
+- Navegação simulada com botão real por `name`/`onclick`; sem login no sistema de produção.
+- Interface Tkinter instanciada em ambiente gráfico virtual.
+- **Pendente:** autenticação real, retorno da pesquisa no SISREG, valores e seletores da tela pós-pesquisa, execução Windows via GitHub Actions e aprovação institucional.
+
+Não afirmar que a captura do CNS real está homologada até o teste assistido da Regulação/TI.

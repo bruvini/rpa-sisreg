@@ -1,58 +1,47 @@
-# RPA SISREG — Preparação e consulta assistida v0.2
+# RPA SISREG — v0.3 · CPF e CNS em lote
 
-**Status:** protótipo de homologação, não aprovado para produção. **Não** faz extração de solicitações ambulatoriais nem captura automaticamente CNS/nome da página de resultados. A execução no SISREG real exige autorização da Regulação e TI.
+**Protótipo de homologação institucional — acesso ao SISREG exclusivamente por conta autorizada pela Regulação/TI.** O robô faz apenas consultas, não insere nem altera solicitações. Não armazena senhas.
 
-## O que já funciona
+## O que foi implementado
 
-1. Importa o XLSX padronizado do hospital, com **exatamente** as abas `POA CIRURGICO`, `PT6` e `ALTA COMPLEXIDADE`, e os sete cabeçalhos informados na linha 1.
-2. Aceita espelho de AIH em PDF **textual/pesquisável**, opcional. Indexa as AIHs uma única vez e trata `9000000000123` = `900000000012-3` (número de 13 dígitos).
-3. Confere **AIH e nome** antes de anexar documentos do PDF. `CNS/CPF` com CPF válido (11 dígitos) é tratado como CPF; documento de 15 dígitos é tratado como CNS. Se houver divergência, identificador inválido, espelhos conflitantes ou campo ausente, não preenche silenciosamente.
-4. Abre o Edge/Chrome, faz login com usuário e senha da sessão local, mas **não salva credenciais**. A operadora confirma que o login foi aceito.
-5. Para uma AIH selecionada, navega pelo menu **Ambulatorial** e pesquisa o cadastro por CPF ou CNS.
-6. A operadora **confere visualmente o nome** e informa/valida o CNS com 15 dígitos. O robô não afirma ter lido o CNS da página: os XPaths enviados para nome/CNS coincidem com o botão de pesquisa e não são seletores de resultado comprovados.
-7. Após essa confirmação, navega em **Consulta Amb → Solicitações**, informa o CNS e aciona a pesquisa. **Para aí**; a lista resultante não é coletada nem interpretada.
-8. Gera uma **nova cópia XLSX**, preservando as abas, as sete colunas e o arquivo original; registra situação, detalhe, página do PDF, pesquisa aberta e horário. Não atesta solicitação nem autenticidade.
+1. **Planilha hospitalar como arquivo de trabalho:** lê `POA CIRURGICO`, `PT6`, `ALTA COMPLEXIDADE`, com cabeçalho fixo `nomePaciente, numeroAIH, numeroProcedimento, numeroCPF, numeroCNS, caraterInternacao, codigoAutorizador` nas colunas A:G.
+2. **PDF em lote:** indexa o espelho por AIH; ignora hífen do dígito verificador (`9000000000123` = `900000000012-3`). Só associa identificador se **AIH e nome** corresponderem e não houver duplicidade conflitante. Distingue CPF (11 dígitos, dígitos verificadores válidos) de CNS (15 dígitos). A extração não faz OCR.
+3. **Gravação na própria XLSX:** ao clicar **Preparar e atualizar CPFs na planilha**, preenche automaticamente **somente células vazias verificadas** e registra situação/observação em H:L. Preserva A:G e as 3 abas. Cria um backup `NOME.backup_antes_RPA.xlsx` **antes da primeira alteração**. A gravação usa temporário e substituição atômica, confirmando hash para evitar sobrescrita de alterações externas. Planilha precisa estar fechada no Excel.
+4. **Login SISREG:** abre Chrome/Edge, envia login à origem oficial por HTTPS, sem salvar credenciais, e tenta identificar automaticamente o menu da página inicial. Caso haja CAPTCHA/MFA, a operadora conclui manualmente.
+5. **Pesquisa de cadastro CPF → CNS em lote:** use **Iniciar pesquisa dos CNS em lote** com 5, 20, 50 ou todos. O robô procura um cadastro por CPF usando o menu `Solicitar → Ambulatorial` e o botão real `input[name="btn_pesquisar"][onclick*="pesquisarPaciente"]`; aguarda resultado e **somente associa CNS se detectar um nome exato e um único CNS explicitamente rotulado**. Se houver ambiguidade, não grava um CNS e passa à próxima AIH. Uma sequência de 3 erros de navegação suspende o lote.
+6. **Salvamentos periódicos:** faz checkpoints a cada 10 consultas e ao encerrar, com opções Pausar/Retomar/Interromper; mantém backup original. Se outra pessoa alterar a XLSX ou ela estiver bloqueada, suspende e sinaliza falha.
+7. **Próxima etapa mantida separada:** a consulta `Consulta Amb → Solicitações` **não é executada nesta versão**, conforme solicitado.
 
-## Como operar (estação de homologação)
+## Como testar com segurança
 
-1. Abra `SISREG_Login.exe` e entre na aba **1 Arquivos e AIHs**.
-2. Escolha a planilha XLSX e, se existir, o espelho PDF. Clique **Preparar conferência**.
-3. Selecione uma linha e entre em **2 Consulta SISREG**.
-4. Informe usuário/senha **somente no aplicativo local**, escolha Edge ou Chrome, abra o SISREG e confirme no próprio navegador que o login funcionou.
-5. Clique **Pesquisar cadastro do paciente**. Confirme visualmente o paciente no SISREG, digite o CNS visto e marque a confirmação de identidade; clique **Confirmar CNS**.
-6. Clique **Pesquisar solicitações pelo CNS**. O navegador abre a pesquisa, sem classificar seus resultados.
-7. Ao finalizar ou pausar, abra **3 Planilha de saída** e salve uma cópia XLSX em pasta institucional autorizada.
+1. Em pasta institucional autorizada, faça uma **cópia de teste** da planilha real e mantenha o PDF local. Não coloque dados reais no GitHub.
+2. Feche o XLSX no Excel, execute o EXE e, na aba 1, escolha XLSX e PDF. Clique **Preparar e atualizar CPFs na planilha**. Confira CPFs, situações e backup diretamente no XLSX.
+3. Na aba 2, entre com o login autorizado. Verifique se a página principal do SISREG abriu e se o robô reconheceu o menu. Caso necessário, marque a confirmação manual do acesso.
+4. Comece com **lote de 5 pacientes fictícios ou registros reais de homologação expressamente autorizados**. Confira cada CNS registrado. Se não for possível extrair dados da tela com segurança, a coluna E **permanece vazia**, com uma pendência explicativa.
+5. Quando a pesquisa e as decisões estiverem corretas, amplie para 20/50/todos, respeitando os limites operacionais definidos pela TI. O robô não contorna limites, CAPTCHA ou bloqueios do sistema.
+6. Se interromper, abra novamente o mesmo XLSX e prepare-o; CNS existentes não serão duplicados nem substituídos.
 
-## Limitações que não foram ocultadas
+### O que ainda depende da tela real
 
-- **Não foi fornecido o PDF real**, apenas uma captura de tela do espelho. O parser foi testado contra PDF **fictício textual**, mas o PDF SIHD2 real ainda precisa ser homologado. Se o PDF for imagem, a versão não tenta OCR.
-- Os XPaths de SISREG foram fornecidos para esta tela; são **provisórios** e devem ser testados na sessão autorizada. Se a estrutura mudar, a automação para sem insistir.
-- Os XPaths informados para o CNS/nome na tela de resultado são **iguais ao botão de pesquisa**; por isso o CNS não é capturado automaticamente nesta versão.
-- A pesquisa de solicitações é **ambulatorial**, não a consulta de internações/AIHs. Apenas abrir a pesquisa não confirma a existência de solicitação correspondente à AIH.
-- A segurança de PDF/planilha depende também do diretório de salvamento e dos controles institucionais. O XLSX **não é criptografado automaticamente**.
-- Não há automação em lote, sincronização em rede, armazenamento de senha, contorno de CAPTCHA/MFA ou alteração do SISREG.
-- O robô não compara CPF/CNS de forma definitiva caso não haja campos SISREG confirmados.
+O XPath fornecido para o **botão Pesquisar** foi incorporado pelo nome/`onclick`, mas **não foi fornecido um DOM validado da página após a consulta**. A v0.3 tenta ler somente resultados etiquetados como `Nome`, `CPF` e `CNS`, inclusive quando aparecem em campos visíveis de formulário. **Não é possível garantir captura de CNS na instalação real sem homologar esses seletores**. Em caso de dúvida, registra pendência e segue em lote. Nunca interpreta ausência/erro como inexistência de cadastro.
 
-## Compilar EXE sem instalar Python no computador da SMS
+Se as colunas de CNS continuarem vazias, forneça **somente um recorte não identificável da estrutura da página de resultado (HTML sem valores pessoais, com `id`, `name` e etiquetas)** para ajustar o extrator. **Não forneça senha, cookies, tokens ou arquivos com dados reais ao repositório.**
 
-O repositório contém o workflow `.github/workflows/compilar-windows.yml` para compilar num runner Windows do GitHub Actions, usando PyInstaller. Ele executa testes sintéticos antes do empacotamento e publica um artefato `SISREG_Login_Windows` com `SISREG_Login.exe` e `SHA256.txt`. Também é possível compilar em uma estação Windows autorizada com `compilar_windows.ps1`.
+## Segurança, atualização e recuperação
 
-A TI deve avaliar e autorizar a execução do programa não assinado. **Não desative antivírus nem políticas de segurança** para executá-lo. O navegador Edge/Chrome precisa estar instalado e liberado.
+- Backup: fica na **mesma pasta protegida** da planilha, com os mesmos controles de acesso institucionais. Caso algo inesperado ocorra, feche o programa e recupere a cópia `*.backup_antes_RPA.xlsx`.
+- Não salvamos senhas, screenshots, HTML ou prontuários no GitHub. O programa processa informações somente na estação institucional.
+- O arquivo XLSX contém dados sensíveis e **não recebe criptografia automática**. A política de armazenamento/retensão depende da SMS.
+- A rotina lê somente telas oficiais do SISREG; não altera solicitações nem ultrapassa mecanismos de controle de acesso.
+- O EXE é não assinado. Caso bloqueado na estação, solicite liberação pela TI, **sem desativar antivírus ou contornar políticas**.
+- O estado de homologação é **pendente**: testes automatizados são sintéticos, sem login real ou validação de layout pós-pesquisa.
 
-Não coloque credenciais, planilhas com dados reais, PDFs com informações de pacientes ou relatórios no GitHub, inclusive no repositório privado. O código-fonte utiliza somente dados sintéticos nos testes.
+## Compilação no Windows sem instalar Python na estação da Joice
 
-## Dependências do ambiente de compilação
-
-- Python 3.12 no **runner de compilação**, não na estação SMS
-- Playwright + PyInstaller
-- PyMuPDF para PDF textual
-- openpyxl para entrada e geração de cópia XLSX
+GitHub Actions → **Compilar RPA SISREG para Windows** → execução da `main` → **Artifacts → SISREG_Login_Windows**. O runner Windows usa Python 3.12 + PyInstaller; a estação institucional usa somente o `.exe` e o Chrome/Edge existente.
 
 ## Testes
 
-```sh
-python -m pip install -r requirements-build.txt
-python -m unittest discover -s tests -v
-```
+`python -m unittest discover -s tests -v`
 
-Os 24 cenários incluem seleção por AIH com/sem hífen, PDF textual sintético, conflitos e duplicidades, CPF válido/inválido, XLSX padrão, preservação do original, navegação SISREG simulada e verificações de origem/credenciais. **Não equivalem a um teste de acesso real ao SISREG**.
+33 testes automatizados em 19/10/2026: extração, normalização, identidade, escrita segura, preservação de backup, divergência CPF/CNS e navegação simulada. Testes no SISREG real continuam pendentes de autorização e homologação.

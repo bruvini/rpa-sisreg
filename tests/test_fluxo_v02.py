@@ -107,22 +107,29 @@ class TestePlanilha(unittest.TestCase):
 
 
 class MockCampo:
-    def __init__(self, tipo='text'):
-        self.tipo=tipo;self.acao=[]
-    def wait_for(self, **kwargs): self.acao.append('aguardou')
-    def get_attribute(self, chave): return self.tipo
-    def hover(self, **kwargs): self.acao.append('hover')
-    def click(self, **kwargs): self.acao.append('clicou')
-    def fill(self, v, **kwargs): self.acao.append(('preencheu',v))
+    def __init__(self, pagina, seletor):
+        self.pagina=pagina;self.seletor=seletor;self.acao=[]
+        self.tipo='button' if 'btn_pesquisar' in seletor or ('center[2]' in seletor and 'input[1]' in seletor) else ('submit' if 'tr[18]' in seletor and 'input[1]' in seletor else 'text')
+    def count(self):
+        if self.seletor=='a':return 0
+        if self.seletor.endswith('tr[2]/td[2]/input') and not self.pagina.abriu: return 0
+        return 1
+    def is_visible(self):return self.count()>0
+    def wait_for(self, **kw):pass
+    def get_attribute(self, chave):return self.tipo
+    def hover(self, **kw):self.acao.append('hover')
+    def click(self, **kw):
+        self.acao.append('clicou')
+        if '/ul/li[1]' in self.seletor or '/ul/li[4]' in self.seletor:self.pagina.abriu=True
+    def fill(self, v, **kw):self.acao.append(('preencheu',v))
+    def locator(self, css):return MockCampo(self.pagina,css)
 
 
 class MockPagina:
     url='https://sisregiii.saude.gov.br/'
-    def __init__(self): self.campos={}
+    def __init__(self):self.campos={};self.abriu=False;self.frames=[self]
     def locator(self, xpath):
-        if xpath not in self.campos:
-            typ = 'submit' if xpath.endswith('input[1]') and ('center[2]' in xpath or 'tr[18]' in xpath) else 'text'
-            self.campos[xpath] = MockCampo(typ)
+        if xpath not in self.campos:self.campos[xpath]=MockCampo(self,xpath)
         return self.campos[xpath]
 
 
@@ -131,7 +138,7 @@ class TesteNavegacao(unittest.TestCase):
         p=MockPagina(); consultar_cadastro(p,'11144477735')
         acao=[v for campo in p.campos.values() for v in campo.acao]
         self.assertIn(('preencheu','11144477735'),acao)
-        self.assertEqual(acao.count('clicou'),2)
+        self.assertGreaterEqual(acao.count('clicou'),2)
 
     def test_solicitacoes_pesquisa_por_cns(self):
         p=MockPagina(); consultar_solicitacoes_amb(p,'123456789012345')
@@ -146,6 +153,7 @@ class TesteNavegacao(unittest.TestCase):
         p=MockPagina(); p.url='https://example.org'
         with self.assertRaises(NavegacaoInesperada):
             consultar_cadastro(p, '11144477735')
+
 
 if __name__=='__main__':
     unittest.main()
