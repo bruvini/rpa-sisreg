@@ -1,10 +1,9 @@
-# RPA SISREG v0.6.2 — Relatório de testes
+# Relatório de testes — RPA SISREG v0.7.0
 
-A implementação é um protótipo sujeito à homologação na estação institucional; os testes são offline e não autenticam no SISREG.
+**Ambiente local sintético (sem autenticação SISREG real).**
 
-- **108 testes automatizados:** aprovados, incluindo testes gráficos com display virtual e HTML fictício no Chromium.
-- CNS localizado na célula específica do cadastro, com nome e CPF alinhados em linhas diferentes: aprovado em cenário sintético.
-- Nome diferente, CPF diferente, CPF ausente e CNS malformado: nenhum é vinculado automaticamente.
-- Etapas, planilha original, backups, histórico de execução e convenções de nome: sem regressões nos testes existentes.
-- Pendente: confirmar os seletores com a página real do SISREG, política de execução Windows, compilação .exe e a identificação dos CNS autorizados na estação da SMS.
-- Nenhuma planilha, documento ou sessão de paciente real foi incluída em tests/fixtures, CI ou pacote.
+- 117 testes descobertos; 113 executados com sucesso e 4 opcionais ignorados, conforme configuração de ambiente (`SISREG_GUI_TEST=1` em display virtual).
+- Testes novos: `estatisticas` (denominador e soma manual de consultas tentadas, tempos, logs, hashes, dados pessoais proibidos, arquivo TXT sem sobrescrita), tela gráfica (quarta aba, tabela, sem inferência de número de solicitação), finalização idempotente e geração de TXT na pasta do XLSX sintético.
+- Regressão pré-existente mantida: extração PDF, XLSX, cadastro/CNS, hosp/AIH, leitura da ficha, segurança de credenciais, logs administrativos e testes de interface.
+- Sem acesso real à plataforma SISREG; a rede e a precisão dos seletores continuam exigindo homologação na estação institucional.
+- O arquivo de relatório e a apresentação da economia hipotética devem ser revisados pela equipe fiscal antes de uso gerencial.

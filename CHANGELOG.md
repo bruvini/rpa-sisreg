@@ -46,3 +46,14 @@
 ## v0.5.0 — Interface e CNS em lote
 
 - Preparação, pesquisa cadastral sequencial e terceira etapa hospitalar preservadas na v0.6.0.
+
+## v0.7.0 — Indicadores, acompanhamento hospitalar e relatório TXT (2026-10-20)
+
+- Etapa 1 exibe as fases e tempos reais da leitura da planilha, indexação do PDF, cruzamento e gravação; não apresenta como trabalho concluído CPFs já presentes na entrada.
+- Etapas 2 e 3 exibem completude com denominador definido, tempo medido e referência manual hipotética fixa de 10s por consulta efetivamente realizada.
+- Etapa 3 ganhou tabela dinâmica: AIH, paciente, CNS, caráter, procedimento consultado, estado da solicitação e situação. Não inventa número de solicitação quando a fonte oferece somente a AIH.
+- Adicionada aba 4 para estatísticas de encerramento, tempo global (incluindo intervalos entre etapas), totais e ressalva fiscal.
+- TXT técnico sem nomes, AIHs, CPF, CNS, senhas ou páginas, criado junto da cópia XLSX após conclusão/encerramento e complementando o histórico administrativo já existente.
+- Eventos de erro técnico do cadastro e hospital codificados e gravados sem conteúdo identificável.
+- 117 testes descobertos, sem falhas no ambiente gráfico de testes (4 opcionais ignorados).
+- Não houve mudança dos seletores da busca, da regra de correspondência nem da proteção da planilha original.

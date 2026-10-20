@@ -27,6 +27,7 @@ from urllib.parse import urlparse
 from app_info import APP_VERSION, rotulo_versao
 from apresentacao import rotulo_situacao
 from governanca import HistoricoExecucao, exportar_pendencias, limpeza_temporarios
+from estatisticas import Estatisticas, relatorio_tecnico, duracao as duracao_stats, percentual, MANUAL_SEGUNDOS
 
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
 
@@ -139,6 +140,15 @@ class Aplicativo:
         self.thread_navegador=None
         self.sessao=SessaoPlanilha()
         self.historico = None
+        self.estatisticas = Estatisticas()
+        self.inicio_ciclo = None
+        self.inicio_cadastro = None
+        self.inicio_hospital = None
+        self.tentativas_hospital = 0
+        self.acertos_hospital = 0
+        self.falhas_hospital = 0
+        self.consultas_cadastro = 0
+        self.relatorio_finalizado = False
         self.ultima_fonte = None
         self.arquivo_planilha=None
         self.arquivo_pdf=None
@@ -164,10 +174,18 @@ class Aplicativo:
         self.status=tk.StringVar(value='Selecione a planilha-padrão e o espelho PDF do hospital.')
         self.resumo=tk.StringVar(value='Nenhuma conferência carregada.')
         self.progresso=tk.StringVar(value='Aguardando preparação.')
+        self.resumo_cadastro=tk.StringVar(value='Taxa de completude: aguardando consulta.')
+        self.tempo_cadastro=tk.StringVar(value='Tempo: aguardando · manual hipotético: 10s por consulta.')
+        self.resumo_hospital=tk.StringVar(value='Completude: aguardando início.')
+        self.tempo_hospital=tk.StringVar(value='Tempo: aguardando · manual hipotético: 10s por consulta.')
+        self.resultado_geral=tk.StringVar(value='Aguardando conclusão das três etapas.')
+        self.resultado_tempos=tk.StringVar(value='Os tempos serão calculados durante a execução.')
+        self.resultado_arquivo_log=tk.StringVar(value='O relatório TXT ficará na pasta da cópia XLSX.')
         self.dados_atuais={'cpf':0,'cns':0,'pendentes':0,'falhas':0,'total':0}
         self._montar()
         self.abas.tab(1,state='disabled')
         self.abas.tab(2,state='disabled')
+        self.abas.tab(3,state='disabled')
         self.btn_lote.configure(state='disabled')
         root.after(140,self._ler_eventos)
 
@@ -190,10 +208,11 @@ class Aplicativo:
                   borderwidth=0, cursor='hand2', font=('Segoe UI',10)).place(relx=0.985, y=22, anchor='ne')
         corpo=ttk.Frame(self.root,padding=13);corpo.pack(fill='both',expand=True)
         self.abas=ttk.Notebook(corpo);self.abas.pack(fill='both',expand=True)
-        a=ttk.Frame(self.abas,padding=12);b=ttk.Frame(self.abas,padding=12);c=ttk.Frame(self.abas,padding=12)
+        a=ttk.Frame(self.abas,padding=12);b=ttk.Frame(self.abas,padding=12);c=ttk.Frame(self.abas,padding=12);d=ttk.Frame(self.abas,padding=16)
         self.abas.add(a,text='  1  Planilha e PDF  ')
         self.abas.add(b,text='  2  Pesquisa em lote SISREG  ')
         self.abas.add(c,text='  3  Solicitações hospitalares  ')
+        self.abas.add(d,text='  4  Resultados da execução  ')
         ttk.Label(a,text='A planilha recebida é preservada; os dados são gravados automaticamente numa cópia de trabalho.',
                   wraplength=950,font=('Segoe UI',10,'bold')).pack(anchor='w',pady=(0,10))
         seletores=ttk.Frame(a);seletores.pack(fill='x',pady=(0,8))
@@ -263,7 +282,9 @@ class Aplicativo:
         self.btn_pausa.pack(side='left',padx=(0,8))
         ttk.Button(fexec,text='Tentar salvar',command=self._tentar_salvar).pack(side='left',padx=(0,8))
         ttk.Button(fexec,text='Interromper',command=self._interromper).pack(side='left')
-        ttk.Label(b,textvariable=self.progresso,font=('Segoe UI',12,'bold')).pack(anchor='w',pady=(16,8))
+        ttk.Label(b,textvariable=self.progresso,font=('Segoe UI',12,'bold')).pack(anchor='w',pady=(11,2))
+        ttk.Label(b,textvariable=self.resumo_cadastro,font=('Segoe UI',10,'bold')).pack(anchor='w',pady=(0,2))
+        ttk.Label(b,textvariable=self.tempo_cadastro,wraplength=930).pack(anchor='w',pady=(0,8))
         self.diagnostico_cns=tk.StringVar(value='O motivo das pendências será mostrado aqui após as consultas.')
         ttk.Label(b,textvariable=self.diagnostico_cns,wraplength=930).pack(anchor='w',pady=(0,8))
         self.barra=ttk.Progressbar(b,mode='determinate',maximum=100,value=0)
@@ -304,13 +325,40 @@ class Aplicativo:
         ttk.Button(hf,text='Pausar / Retomar',command=self._pausar).pack(side='left',padx=(0,10))
         ttk.Button(hf,text='Interromper',command=self._interromper).pack(side='left')
         self.progresso_hospital=tk.StringVar(value='Aguardando conclusão da etapa 2 e autorização para consultar.')
-        ttk.Label(c,textvariable=self.progresso_hospital,font=('Segoe UI',11,'bold')).pack(anchor='w',pady=(18,9))
+        ttk.Label(c,textvariable=self.progresso_hospital,font=('Segoe UI',11,'bold')).pack(anchor='w',pady=(12,3))
+        ttk.Label(c,textvariable=self.resumo_hospital,font=('Segoe UI',10,'bold')).pack(anchor='w',pady=(0,2))
+        ttk.Label(c,textvariable=self.tempo_hospital,wraplength=930).pack(anchor='w',pady=(0,8))
         self.barra_hospital=ttk.Progressbar(c,mode='determinate',maximum=100,value=0)
         self.barra_hospital.pack(fill='x')
-        ttk.Button(c,text='Exportar somente pendências (XLSX)',command=self._exportar_pendencias).pack(anchor='w',pady=(13,0))
+        ttk.Label(c,text='Solicitações consultadas — resultado exibido durante a execução',
+                  font=('Segoe UI',10,'bold')).pack(anchor='w',pady=(10,5))
+        quadro_hosp=ttk.Frame(c);quadro_hosp.pack(fill='both',expand=True)
+        colunas_hosp=[('aih','AIH',134),('paciente','Paciente',218),('cns','CNS',143),
+                       ('carater','Caráter',105),('procedimento','Procedimento',134),
+                       ('solicitacao','Solicitação',143),('situacao','Situação',215)]
+        self.tabela_hospital=ttk.Treeview(quadro_hosp,columns=[x[0] for x in colunas_hosp],show='headings',height=8)
+        for chave,titulo,largura in colunas_hosp:
+            self.tabela_hospital.heading(chave,text=titulo)
+            self.tabela_hospital.column(chave,width=largura,minwidth=40,stretch=(chave=='paciente'))
+        barra_hosp=ttk.Scrollbar(quadro_hosp,orient='vertical',command=self.tabela_hospital.yview)
+        self.tabela_hospital.configure(yscrollcommand=barra_hosp.set)
+        self.tabela_hospital.pack(side='left',fill='both',expand=True)
+        barra_hosp.pack(side='right',fill='y')
+        ttk.Button(c,text='Exportar somente pendências (XLSX)',command=self._exportar_pendencias).pack(anchor='w',pady=(10,0))
         ttk.Label(c,text='Conferência automatizada ≠ análise fiscal concluída. O tempo medido é real. A estimativa manual usa 15 segundos por AIH como premissa fixa '
                   'e não comprova economia de trabalho. Não são alteradas '
                   'solicitações no SISREG. Feche o Excel durante os lotes.',wraplength=920).pack(anchor='w',pady=(14,0))
+        ttk.Label(d,text='Resumo da execução · a decisão fiscal permanece humana',
+                  font=('Segoe UI',15,'bold')).pack(anchor='w',pady=(5,16))
+        bloco=tk.Frame(d,bg='#eff5f9',highlightbackground='#ccdae7',highlightthickness=1)
+        bloco.pack(fill='x')
+        tk.Label(bloco,textvariable=self.resultado_geral,bg='#eff5f9',fg=AZUL,
+                 font=('Segoe UI',12,'bold'),justify='left',wraplength=960).pack(anchor='w',padx=16,pady=(16,7))
+        tk.Label(bloco,textvariable=self.resultado_tempos,bg='#eff5f9',fg='#315267',
+                 font=('Segoe UI',11),justify='left',wraplength=960).pack(anchor='w',padx=16,pady=(0,12))
+        ttk.Label(d,textvariable=self.resultado_arquivo_log,wraplength=960).pack(anchor='w',pady=(16,8))
+        ttk.Label(d,text='Resultado automatizado: dados coletados, ocorrências e pendências. '
+                  'A etapa de atesto não é realizada pelo robô.',wraplength=920).pack(anchor='w',pady=(15,0))
         rodape=ttk.Frame(corpo);rodape.pack(side='bottom',fill='x',pady=(10,0))
         ttk.Label(rodape,text=f'v{APP_VERSION} · Atesto é decisão do fiscal.',
                   foreground='#4c6375').pack(side='left',padx=(0,10))
@@ -340,9 +388,10 @@ class Aplicativo:
         if not hasattr(self,'btn_proxima'): return
         atual=self.abas.index(self.abas.select())
         pronto = ((atual==0 and self.preparo_concluido and not self.carregando) or
-                  (atual==1 and self.cadastro_concluido and not self.processando))
+                  (atual==1 and self.cadastro_concluido and not self.processando) or
+                  (atual==2 and self.estatisticas.etapas['hospital'].concluida and not self.processando))
         self.btn_proxima.configure(state='normal' if pronto else 'disabled')
-        if atual>=2:
+        if atual>=3:
             self.btn_proxima.pack_forget()
         elif not self.btn_proxima.winfo_manager():
             self.btn_proxima.pack(side='right',padx=(0,10),before=self.btn_encerrar)
@@ -353,6 +402,8 @@ class Aplicativo:
             self.abas.select(1)
         elif atual==1 and self.cadastro_concluido and not self.processando:
             self.abas.select(2)
+        elif atual==2 and self.estatisticas.etapas['hospital'].concluida and not self.processando:
+            self.abas.select(3)
         self._atualizar_avanco()
 
     def _linha_visual(self, r, com_cns=False):
@@ -367,6 +418,24 @@ class Aplicativo:
             tabela.item(iid,values=dados)
         else:
             tabela.insert('','end',iid=iid,values=dados)
+
+    def _linha_hospital(self, r):
+        # Não inferir o número de solicitação a partir da AIH: o modelo de
+        # sete colunas não oferece número de solicitação separado.
+        estado = r.consulta_hospitalar
+        referencia = ('AIH localizada na ficha' if estado in ('FICHA_CONFERIDA','PROCEDIMENTO_DIVERGENTE')
+                      else 'Ainda não confirmada' if estado else 'Aguardando')
+        return (r.aih, r.nome, r.cns, r.carater or '—',
+                r.procedimento_sisreg or 'Não coletado', referencia,
+                rotulo_situacao(r.situacao) if estado else 'Aguardando consulta')
+
+    def _atualizar_linha_hospital(self, indice):
+        iid=str(indice)
+        dados=self._linha_hospital(self.sessao.registros[indice])
+        if self.tabela_hospital.exists(iid):
+            self.tabela_hospital.item(iid,values=dados)
+        else:
+            self.tabela_hospital.insert('', 'end', iid=iid,values=dados)
 
     def _escolher_xlsx(self):
         arq=filedialog.askopenfilename(title='Planilha-padrão',filetypes=[('Excel','*.xlsx')])
@@ -394,6 +463,7 @@ class Aplicativo:
         self.cadastro_concluido=False
         self.abas.tab(1,state='disabled')
         self.abas.tab(2,state='disabled')
+        self.abas.tab(3,state='disabled')
         self.cartao_resultado.pack_forget()
         self.atividade_preparo.set('Arquivos alterados: execute a conferência novamente.')
 
@@ -402,7 +472,10 @@ class Aplicativo:
         if not self.arquivo_planilha:
             self.status.set('Selecione o XLSX hospitalar.');return
         self.preparo_concluido=False;self.cadastro_concluido=False
-        self.abas.tab(1,state='disabled');self.abas.tab(2,state='disabled')
+        self.abas.tab(1,state='disabled');self.abas.tab(2,state='disabled');self.abas.tab(3,state='disabled')
+        self.estatisticas=Estatisticas()
+        self.inicio_ciclo=time.perf_counter()
+        self.relatorio_finalizado=False
         self.cartao_resultado.pack_forget()
         self.carregando=True;self.inicio_preparo=time.perf_counter();self._atualizar_relogio();self.btn_preparar.configure(state='disabled')
         self.atividade_preparo.set('Lendo planilha, indexando PDF e criando backup...')
@@ -420,15 +493,23 @@ class Aplicativo:
             self.status.set('Histórico local indisponível. Avise a TI antes de uso oficial.')
         def tarefa():
             try:
+                tempos={}
+                t0=time.perf_counter()
                 sessao=SessaoPlanilha()
                 sessao.carregar(self.arquivo_planilha)
+                tempos['planilha']=time.perf_counter()-t0
+                self.eventos.put(('preparo_fase', ('Planilha lida. Abrindo e indexando o PDF completo (etapa mais demorada)...',)))
                 # Uma tabela provisória aparece imediatamente; nenhum widget Tk
                 # é acessado pela thread de processamento.
                 self.eventos.put(('preparo_inicio', [
                     (i, self._linha_visual(r)) for i,r in enumerate(sessao.registros)]))
                 informacao='PDF não informado.'
                 if self.arquivo_pdf:
+                    t0=time.perf_counter()
                     ix,avisos=ler_espelhos_pdf(self.arquivo_pdf)
+                    tempos['indexacao_pdf']=time.perf_counter()-t0
+                    self.eventos.put(('preparo_fase', (f'PDF indexado em {self._duracao(tempos["indexacao_pdf"])}. Cruzando as AIHs...',)))
+                    t0=time.perf_counter()
                     lote=[]
                     def ao_complementar(indice, registro, total):
                         lote.append((indice-1, self._linha_visual(registro)))
@@ -436,12 +517,16 @@ class Aplicativo:
                             self.eventos.put(('preparo_linhas', (lote[:],indice,total)))
                             lote.clear()
                     sessao.complementar_pdf(ix,self.arquivo_pdf,progresso=ao_complementar)
+                    tempos['cruzamento']=time.perf_counter()-t0
                     informacao=f'{len(ix)} AIHs indexadas no espelho.'
                     if avisos: informacao+=' Estrutura do PDF requer revisão.'
+                self.eventos.put(('preparo_fase', ('Cruzamento finalizado. Gravando a planilha de trabalho...',)))
+                t0=time.perf_counter()
                 trabalho=sessao.preparar_copia_de_trabalho()
                 gravacao=sessao.salvar_na_planilha(motivo='pdf')
+                tempos['gravacao']=time.perf_counter()-t0
                 self.eventos.put(('historico_preparacao', len(sessao.registros)))
-                self.eventos.put(('preparado',(sessao,informacao,gravacao,time.perf_counter()-self.inicio_preparo)))
+                self.eventos.put(('preparado',(sessao,informacao,gravacao,time.perf_counter()-self.inicio_preparo,tempos)))
             except Exception as e:
                 self.eventos.put(('erro_preparo',type(e).__name__))
         threading.Thread(target=tarefa,daemon=True).start()
@@ -582,10 +667,17 @@ class Aplicativo:
                      and r.situacao not in ('CPF_CONFLITANTE_PDF','ESPELHOS_CONFLITANTES','NOME_DIVERGENTE_ESPELHO')]
         if not selecionados:
             self.status.set('Nenhum CPF elegível pendente. Etapa 2 concluída.')
+            self.estatisticas.registrar_total('cadastro',0)
+            self.estatisticas.concluir('cadastro',0.0,consultados=0,encontrados=0)
             self.cadastro_concluido=True
             self.abas.tab(2,state='normal')
             self._atualizar_avanco()
             return
+        self.inicio_cadastro=time.perf_counter()
+        self.consultas_cadastro=0
+        self.estatisticas.registrar_total('cadastro',len(selecionados))
+        self.resumo_cadastro.set(f'0 de {len(selecionados)} consultas elegíveis concluídas (0,0%).')
+        self.tempo_cadastro.set(f'Iniciando · manual projetado: {self._duracao(len(selecionados)*10)} (10s/consulta).')
         self.tipo_lote='cadastro';self.processando=True;self.persistencia_falhou=False;self.navegacao_falhou=False;self.pausa.clear();self.parar.clear()
         self.cadastro_concluido=False
         self.abas.tab(2,state='disabled')
@@ -605,7 +697,17 @@ class Aplicativo:
                     ('FICHA_CONFERIDA','PROCEDIMENTO_DIVERGENTE')
                     and not r.situacao.startswith(('CNS_CONFLITO','CPF_CONFLITANTE','ESPELHOS_CONFLITANTES'))]
         if not candidatos:
-            self.status.set('Não há solicitações hospitalares pendentes elegíveis com CNS na planilha.');return
+            self.status.set('Sem solicitações hospitalares elegíveis para pesquisa. Resultado registrado sem consultas adicionais.')
+            self.estatisticas.registrar_total('hospital',0)
+            self.estatisticas.concluir('hospital',0.0,consultados=0,encontrados=0)
+            self._finalizar_relatorio()
+            return
+        self.inicio_hospital=time.perf_counter()
+        self.tentativas_hospital=0;self.acertos_hospital=0;self.falhas_hospital=0
+        self.estatisticas.registrar_total('hospital',len(candidatos))
+        self.resumo_hospital.set(f'0 de {len(candidatos)} elegíveis com ficha conferida (0,0%).')
+        self.tempo_hospital.set(f'Iniciando · manual projetado: {self._duracao(len(candidatos)*10)} (10s/consulta).')
+        for i in candidatos: self._atualizar_linha_hospital(i)
         self.tipo_lote='hospital';self.processando=True
         self.persistencia_falhou=False;self.navegacao_falhou=False
         self.parar.clear();self.pausa.clear()
@@ -648,7 +750,9 @@ class Aplicativo:
             while passos < 3:
                 evento,dado=self.eventos.get_nowait()
                 passos+=1
-                if evento=='preparo_inicio':
+                if evento=='preparo_fase':
+                    self.atividade_preparo.set(dado[0])
+                elif evento=='preparo_inicio':
                     itens=self.tabela.get_children()
                     if itens:self.tabela.delete(*itens)
                     for indice,linha in dado:
@@ -660,7 +764,7 @@ class Aplicativo:
                         self._atualizar_linha_visual(indice,linha)
                     self.atividade_preparo.set(f'Conferindo documentos: {contador}/{total} registros...')
                 elif evento=='preparado':
-                    sessao,informacao,atualizacao,segundos=dado
+                    sessao,informacao,atualizacao,segundos,fases=dado
                     self.sessao=sessao
                     self._atualizar_tabela()
                     self.cronometro.set('Tempo: '+self._duracao(segundos))
@@ -678,6 +782,9 @@ class Aplicativo:
                         f'✓ Nova planilha criada: {sessao.origem.name} · Arquivo hospitalar original preservado.')
                     self.cartao_resultado.pack(fill='x',pady=(0,8),before=self.grade)
                     self.atividade_preparo.set('Concluído. Cópia de trabalho atualizada.')
+                    self.estatisticas.registrar_total('preparo',len(sessao.registros))
+                    self.estatisticas.concluir('preparo',segundos,consultados=len(sessao.registros),
+                        encontrados=cpf_presentes,pendencias=total-cpf_presentes,fases=fases)
                     self.preparo_concluido=True
                     self.abas.tab(1,state='normal')
                     self.status.set('Etapa 1: dados extraídos na cópia de trabalho. Agora pode acessar o SISREG.')
@@ -708,25 +815,44 @@ class Aplicativo:
                     self.progresso_hospital.set(f'Iniciando {dado} consultas hospitalares...')
                 elif evento=='hospital_item':
                     idx,resultado,duracao,contador,total=dado
+                    self.tentativas_hospital += 1
+                    if resultado.situacao=='FALHA_NAVEGACAO': self.falhas_hospital+=1
                     reg=self.sessao.registros[idx]
                     self.sessao.registrar_hospital(reg,resultado,duracao)
-                    self._evento_seguro('HOSPITAL_OK' if resultado.situacao == 'FICHA_CONFERIDA' else 'HOSPITAL_PENDENCIA', 'hospital', contador)
+                    if reg.situacao=='DADOS_COLETADOS_SEM_DIVERGENCIA': self.acertos_hospital+=1
+                    self._evento_seguro('HOSPITAL_OK' if reg.situacao == 'DADOS_COLETADOS_SEM_DIVERGENCIA' else 'HOSPITAL_PENDENCIA', 'hospital', contador)
+                    if resultado.situacao=='FALHA_NAVEGACAO':
+                        self._evento_seguro('ERRO_TECNICO','hospital',contador)
                     if contador%15==0: self._salvar_checkpoint()
                     self._atualizar_linha_visual(idx,self._linha_visual(reg))
                     self._atualizar_linha_visual(idx,self._linha_visual(reg,com_cns=True),True)
+                    self._atualizar_linha_hospital(idx)
+                    self.resumo_hospital.set(f'Fichas sem divergência nos campos consultados: {self.acertos_hospital} de {total} elegíveis ({percentual(self.acertos_hospital,total)}). '
+                        f'Pendências/ressalvas: {self.tentativas_hospital-self.acertos_hospital}.')
+                    self.tempo_hospital.set(
+                        f'Tempo decorrido: {self._duracao(time.perf_counter()-self.inicio_hospital)} · Manual hipotético: {self._duracao(total*10)} (10s/AIH).')
                     self.barra_hospital.configure(value=100*contador/max(1,total))
-                    self.progresso_hospital.set(f'{contador}/{total} consultadas · última: {resultado.situacao} · '
+                    self.progresso_hospital.set(f'{contador}/{total} consultadas · última: {rotulo_situacao(reg.situacao)} · '
                                                f'{self._duracao(duracao)} nesta AIH')
                 elif evento=='hospital_fim':
+                    self.estatisticas.concluir('hospital',time.perf_counter()-self.inicio_hospital,
+                        consultados=self.tentativas_hospital,encontrados=self.acertos_hospital,
+                        pendencias=self.tentativas_hospital-self.acertos_hospital,
+                        falhas=self.falhas_hospital,completa=(self.tentativas_hospital==self.estatisticas.etapas['hospital'].total
+                        and not self.parar.is_set() and not self.navegacao_falhou))
+                    self.tempo_hospital.set(self.estatisticas.comparativo('hospital'))
                     self._salvar_checkpoint()
                     self.processando=False;self.btn_hospital.configure(state='normal')
                     self._resumir_historico()
+                    self._atualizar_avanco()
                     if self.persistencia_falhou:
                         self.status.set('FALHA de salvamento da etapa 3; não feche antes de recuperar os resultados.')
                     elif self.navegacao_falhou:
                         self.status.set('Etapa 3 suspensa por falhas consecutivas. Dados anteriores foram preservados.')
                     else:
                         self.status.set('Etapa 3: coleta automatizada encerrada. A análise fiscal das exceções permanece pendente.')
+                    if not self.persistencia_falhou:
+                        self._finalizar_relatorio()
                 elif evento=='hospital_alerta':
                     self.navegacao_falhou=True
                     self.status.set(str(dado))
@@ -734,19 +860,24 @@ class Aplicativo:
                     self.progresso.set(f'Iniciando pesquisas de {dado} pacientes...')
                 elif evento=='lote_item':
                     idx,cns,motivo,contador,total=dado
+                    self.consultas_cadastro+=1
                     reg=self.sessao.registros[idx]
                     self.sessao.registrar_cadastro_em_lote(reg,cns,motivo)
                     self._evento_seguro('CADASTRO_OK' if reg.situacao == 'CNS_CONFIRMADO_SISREG' else 'CADASTRO_PENDENCIA','cadastro',contador)
                     self.motivos_cadastro[motivo]=self.motivos_cadastro.get(motivo,0)+1
                     if reg.situacao=='CNS_CONFIRMADO_SISREG':self.dados_atuais['cns']+=1
                     else:self.dados_atuais['pendentes']+=1
-                    if motivo=='FALHA_DE_NAVEGACAO_OU_TEMPO':self.dados_atuais['falhas']+=1
+                    if motivo=='FALHA_DE_NAVEGACAO_OU_TEMPO':
+                        self.dados_atuais['falhas']+=1
+                        self._evento_seguro('ERRO_TECNICO','cadastro',contador)
                     # Checkpoint a cada 10 linhas, sempre depois da confirmação objetiva.
                     if contador%10==0:
                         self._salvar_checkpoint()
                     self._atualizar_linha_visual(idx,self._linha_visual(reg))
                     self._atualizar_linha_visual(idx,self._linha_visual(reg,com_cns=True),True)
                     self.barra.configure(value=100*contador/max(total,1))
+                    self.resumo_cadastro.set(f'CNS identificados: {self.dados_atuais["cns"]} de {total} consultas elegíveis ({percentual(self.dados_atuais["cns"],total)}).')
+                    self.tempo_cadastro.set(f'Tempo decorrido: {self._duracao(time.perf_counter()-self.inicio_cadastro)} · Manual hipotético: {self._duracao(total*10)} (10s por consulta).')
                     self.progresso.set(f'{contador}/{total} consultados · '
                                       f'{self.dados_atuais["cns"]} CNS identificados · '
                                       f'{self.dados_atuais["pendentes"]} pendências')
@@ -757,6 +888,11 @@ class Aplicativo:
                          if pendencias else 'nenhuma até agora'))
                 elif evento=='lote_fim':
                     processados,previstos=dado
+                    self.estatisticas.concluir('cadastro',time.perf_counter()-self.inicio_cadastro,
+                        consultados=processados,encontrados=self.dados_atuais['cns'],
+                        pendencias=self.dados_atuais['pendentes'],falhas=self.dados_atuais['falhas'],
+                        completa=(processados==previstos and not self.parar.is_set() and not self.navegacao_falhou))
+                    self.tempo_cadastro.set(self.estatisticas.comparativo('cadastro'))
                     self._salvar_checkpoint()
                     self.processando=False;self.btn_lote.configure(state='normal')
                     self._resumir_historico()
@@ -808,6 +944,49 @@ class Aplicativo:
                 erros_tecnicos=self.dados_atuais.get('falhas',0))
         except (OSError,ValueError):pass
 
+    def _finalizar_relatorio(self):
+        if self.relatorio_finalizado or not self.sessao.origem:
+            return
+        self._resumir_historico()
+        # Inclui o tempo de espera entre etapas na medição total, sem escondê-lo.
+        segundos=(time.perf_counter()-self.inicio_ciclo) if self.inicio_ciclo is not None else 0.0
+        etapas=self.estatisticas.etapas
+        completa=all(e.concluida for e in etapas.values()) and not self.persistencia_falhou
+        self.estatisticas.encerrar(segundos=segundos,situacao='CONCLUIDA' if completa else 'PARCIAL')
+        try:
+            if self.historico and not self.historico.termino:
+                self.historico.encerrar('CONCLUIDA' if completa else 'INTERROMPIDA')
+        except (OSError,ValueError): pass
+        destino_base=self.sessao.origem.parent
+        carimbo=datetime.now().strftime('%d%m%Y_%H%M%S')
+        # Não sobrescrever log de outra execução iniciada no mesmo segundo.
+        nome=f'RELATORIO_TECNICO_RPA_{carimbo}.txt'
+        destino=destino_base/nome
+        if destino.exists():
+            destino=destino_base/f'RELATORIO_TECNICO_RPA_{carimbo}_{self.historico.id[:6] if self.historico else "novo"}.txt'
+        try:
+            relatorio_tecnico(self.estatisticas,self.historico,destino)
+            self.estatisticas.relatorio=destino.name
+            self.resultado_arquivo_log.set(f'Planilha de trabalho: {self.sessao.origem.name} · Relatório técnico: {destino.name} (mesma pasta)')
+        except (OSError,ValueError):
+            self.resultado_arquivo_log.set('Não foi possível gerar o TXT na pasta da planilha. Verifique permissão de gravação.')
+        n=len(self.sessao.registros)
+        e2=etapas['cadastro'];e3=etapas['hospital']
+        self.resultado_geral.set(f'{n} registros hospitalares · {etapas["preparo"].encontrados} CPFs disponíveis ({percentual(etapas["preparo"].encontrados,n)})\n'
+            f'{e2.encontrados}/{e2.total} CNS localizados ({percentual(e2.encontrados,e2.total)}) · '
+            f'{e3.encontrados}/{e3.total} fichas sem divergências nos campos consultados ({percentual(e3.encontrados,e3.total)})\n'
+            f'Pendências da etapa 3: {e3.pendencias} · erros técnicos: {sum(e.falhas_tecnicas for e in etapas.values())}.')
+        manual=self.estatisticas.total_manual()
+        dif=manual-segundos
+        self.resultado_tempos.set(
+            f'Tempo total decorrido (inclui esperas): {self._duracao(segundos)}\n'
+            f'Etapa 1: {self._duracao(etapas["preparo"].segundos)} · Etapa 2: {self._duracao(e2.segundos)} · Etapa 3: {self._duracao(e3.segundos)}\n'
+            f'Tempo manual hipotético: {self._duracao(manual)} (15s por AIH + 10s por consulta de CNS + 10s por consulta hospitalar).\n'
+            f'Diferença hipotética: {"+" if dif>=0 else "−"}{self._duracao(abs(dif))}. Não demonstra economia comprovada.')
+        self.relatorio_finalizado=True
+        self.abas.tab(3,state='normal')
+        self._atualizar_avanco()
+
     def _exportar_pendencias(self):
         if not self.preparo_concluido:
             self.status.set('Prepare a conferência antes de exportar pendências.');return
@@ -855,10 +1034,13 @@ class Aplicativo:
             self._fechar_aplicacao()
 
     def _fechar_aplicacao(self):
+        if self.preparo_concluido and not self.relatorio_finalizado and not self.persistencia_falhou:
+            try: self._finalizar_relatorio()
+            except (OSError,ValueError): pass
         try:
             self._resumir_historico()
             if self.historico and not self.historico.termino:
-                self.historico.encerrar('INTERRUPCAO' if self.parar.is_set() and
+                self.historico.encerrar('INTERROMPIDA' if self.parar.is_set() and
                         self.navegacao_falhou else 'CONCLUIDA' if self.preparo_concluido else 'INTERROMPIDA')
         except (OSError,ValueError):pass
         self.usuario.set('');self.senha.set('')

@@ -104,7 +104,7 @@ class TestesRegressao(unittest.TestCase):
         self.assertIsNone(numero)
         self.assertEqual(motivo,'CNS_DESTACADO_AMBIGUO_OU_AUSENTE')
 
-    def test_versao_central(self):self.assertEqual(APP_VERSION,'0.6.2')
+    def test_versao_central(self):self.assertEqual(APP_VERSION,'0.7.0')
 
 
 @unittest.skipUnless(os.environ.get('SISREG_GUI_TEST')=='1','Exige display gráfico')
