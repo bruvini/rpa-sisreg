@@ -47,7 +47,7 @@ class TesteMigracaoLegada(unittest.TestCase):
         try:
             for aba in ('POA CIRURGICO','PT6','ALTA COMPLEXIDADE'):
                 ws=wb[aba]
-                self.assertEqual(tuple(ws.cell(1,i).value for i in range(8,12)),CAMPOS_FINAIS)
+                self.assertEqual(tuple(ws.cell(1,i).value for i in range(8,11)),CAMPOS_FINAIS)
                 self.assertIsNone(ws.cell(1,12).value)
                 for reg in (r for r in s.registros if r.aba == aba):
                     self.assertIsNotNone(ws.cell(reg.linha,8).value)
@@ -97,7 +97,7 @@ class TesteMigracaoLegada(unittest.TestCase):
         self.assertTrue(copia.exists())
 
     def test_versao_eh_consistente(self):
-        self.assertEqual(APP_VERSION,'0.7.3')
+        self.assertEqual(APP_VERSION,'0.7.4')
 
 @unittest.skipUnless(os.environ.get('SISREG_GUI_TEST')=='1','Exige ambiente gráfico')
 class TesteLogFalha(unittest.TestCase):
@@ -116,7 +116,8 @@ class TesteLogFalha(unittest.TestCase):
                                           pendencias=1,falhas=1,completa=False)
                 app.estatisticas.diagnosticar('SALVAMENTO_XLSX','ERRO',segundos=2,
                                              categoria='LAYOUT_XLSX_INCOMPATIVEL')
-                app._registrar_falha_preparacao(2)
+                with patch('sisreg_login.pastas_de_saida', return_value=(Path(diretorio)/'Análises', Path(diretorio))):
+                    app._registrar_falha_preparacao(2)
                 arquivos=list(Path(diretorio).glob('RELATORIO_TECNICO_RPA_FALHA_*.txt'))
                 self.assertEqual(len(arquivos),1)
                 conteudo=arquivos[0].read_text(encoding='utf8')

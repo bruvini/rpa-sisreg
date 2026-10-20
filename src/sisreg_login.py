@@ -25,6 +25,7 @@ import threading
 import tkinter as tk
 from tkinter import ttk
 from urllib.parse import urlparse
+from diretorios import pastas_de_saida
 from app_info import APP_VERSION, rotulo_versao
 from apresentacao import rotulo_situacao
 from governanca import HistoricoExecucao, limpeza_temporarios
@@ -145,6 +146,7 @@ class Aplicativo:
         self.parar=threading.Event()
         self.pausa=threading.Event()
         self.thread_navegador=None
+        self.login_pendente=False
         self.sessao=SessaoPlanilha()
         self.historico = None
         self.estatisticas = Estatisticas()
@@ -187,7 +189,7 @@ class Aplicativo:
         self.tempo_hospital=tk.StringVar(value='Tempo: aguardando · manual hipotético: 10s por consulta.')
         self.resultado_geral=tk.StringVar(value='Aguardando conclusão das três etapas.')
         self.resultado_tempos=tk.StringVar(value='Os tempos serão calculados durante a execução.')
-        self.resultado_arquivo_log=tk.StringVar(value='O relatório TXT ficará na pasta da cópia XLSX.')
+        self.resultado_arquivo_log=tk.StringVar(value='O TXT será salvo em Logs, ao lado do executável.')
         self.dados_atuais={'cpf':0,'cns':0,'pendentes':0,'falhas':0,'total':0}
         self.estatisticas.diagnosticar('INICIO_EXECUCAO', 'INICIO')
         self._montar()
@@ -475,7 +477,11 @@ class Aplicativo:
             self._invalidar_preparo()
             self.arquivo_planilha=Path(arq)
             # Só temporários com prefixo exclusivo e idade >=48h. Nunca originais.
-            limpeza_temporarios(self.arquivo_planilha.parent)
+            try:
+                analises, _logs = pastas_de_saida()
+                limpeza_temporarios(analises)
+            except OSError:
+                self.status.set('Não foi possível criar Análises/Logs junto do executável. Verifique permissões da TI.')
             self.lbl_xlsx.configure(text=self.arquivo_planilha.name)
     def _escolher_pdf(self):
         arq=filedialog.askopenfilename(title='Espelho de AIH',filetypes=[('PDF','*.pdf')])
@@ -513,7 +519,8 @@ class Aplicativo:
         try:
             if self.historico and not self.historico.termino:
                 self.historico.encerrar('INTERROMPIDA')
-            self.historico=HistoricoExecucao()
+            _analises, logs = pastas_de_saida()
+            self.historico=HistoricoExecucao(pasta=logs)
             self.historico.fonte(self.arquivo_planilha, tipo='xlsx')
             if self.arquivo_pdf:
                 self.historico.fonte(self.arquivo_pdf, tipo='pdf')
@@ -554,7 +561,8 @@ class Aplicativo:
                     if avisos: informacao+=' Estrutura do PDF requer revisão.'
                 self.eventos.put(('preparo_fase', ('Cruzamento finalizado. Gravando a planilha de trabalho...',)))
                 t0=time.perf_counter()
-                trabalho=sessao.preparar_copia_de_trabalho()
+                analises, _logs = pastas_de_saida()
+                trabalho=sessao.preparar_copia_de_trabalho(diretorio_saida=analises)
                 gravacao=sessao.salvar_na_planilha(motivo='pdf')
                 tempos['gravacao']=time.perf_counter()-t0
                 self.eventos.put(('historico_preparacao', len(sessao.registros)))
@@ -594,16 +602,31 @@ class Aplicativo:
     def _iniciar_login(self):
         if not self.preparo_concluido or self.carregando:
             self.status.set('Conclua a etapa 1 antes de acessar o SISREG.');return
-        if self.thread_navegador and self.thread_navegador.is_alive():
-            self.status.set('Já há um navegador ativo.');return
+        if self.browser_ready:
+            self.status.set('Uma sessão SISREG autenticada já está ativa.');return
         u=self.usuario.get().strip();s=self.senha.get()
         if not u or not s:
             self.status.set('Preencha usuário e senha para abrir o SISREG.');return
+        if self.thread_navegador and self.thread_navegador.is_alive():
+            # Na falha anterior, a thread pode ainda estar liberando o Chrome.
+            # Agendar nova tentativa na própria GUI, sem guardar senha em arquivo.
+            self.login_pendente=True
+            self.status.set('Encerrando tentativa anterior. Nova autenticação será iniciada automaticamente...')
+            return
+        self.login_pendente=False
         canal='chrome' if self.navegador.get()=='Google Chrome' else 'msedge'
         self.usuario.set('');self.senha.set('');self.parar.clear()
         self.browser_ready=False;self.cadastro_concluido=False
         self.thread_navegador=threading.Thread(target=self._navegador_worker,args=(u,s,canal),daemon=True)
-        self.thread_navegador.start();self.status.set('Abrindo SISREG...')
+        self.thread_navegador.start();self.status.set('Abrindo nova sessão SISREG...')
+
+    def _retomar_login_pendente(self):
+        if self.parar.is_set() or not self.preparo_concluido:
+            return
+        if self.thread_navegador and self.thread_navegador.is_alive():
+            self.root.after(250, self._retomar_login_pendente)
+            return
+        self._iniciar_login()
 
     def _navegador_worker(self,usuario,senha,canal):
         browser=None
@@ -620,14 +643,25 @@ class Aplicativo:
                     if autenticao_ativa(pagina,timeout=45000):
                         self.eventos.put(('autenticado',None))
                     else:
-                        self.eventos.put(('erro_login','O menu autenticado não apareceu no prazo. Consulte o navegador; não iniciamos pesquisas.'))
+                        self.eventos.put(('erro_login','Acesso não confirmado. Corrija usuário/senha e tente novamente, sem refazer a etapa 1.'))
+                        return  # Fecha navegador/contexto antigos antes de nova tentativa.
                 except Exception:
-                    self.eventos.put(('erro_login','Login ou acesso indisponível. Verifique a página no navegador.'))
+                    self.eventos.put(('erro_login','Login ou acesso indisponível. Tente novamente sem refazer a etapa 1.'))
+                    return
                 finally:
                     usuario='';senha=''
                 while not self.parar.is_set():
                     try: cmd,payload=self.comandos.get(timeout=0.2)
-                    except queue.Empty:continue
+                    except queue.Empty:
+                        # Se a operadora fechou o Chrome, liberar novo login na
+                        # mesma janela do RPA (sem reiniciar a etapa 1).
+                        try:
+                            if (not browser.is_connected() or
+                                    not any(not pg.is_closed() for pg in contexto.pages)):
+                                return
+                        except Exception:
+                            return
+                        continue
                     if cmd == 'hospital':
                         indices=payload
                         self.eventos.put(('hospital_iniciado',len(indices)))
@@ -1004,10 +1038,16 @@ class Aplicativo:
                     self.status.set('Pesquisa SISREG não concluída (' + str(dado)[:48] + '). Registro encaminhado para pendências.')
                 elif evento=='erro_login':
                     self.estatisticas.diagnosticar('LOGIN_SUBMETIDO','ERRO',categoria='SESSAO_NAO_AUTORIZADA')
+                    self.browser_ready=False
                     self.status.set(str(dado))
                 elif evento=='navegador_parou':
                     self.estatisticas.diagnosticar('SESSAO_ENCERRADA','OK')
                     self.browser_ready=False
+                    if self.login_pendente and not self.parar.is_set():
+                        self.login_pendente=False
+                        # Eventos são entregues antes de finalizar a thread: aguardar
+                        # o término efetivo, sem bloquear o loop Tk.
+                        self.root.after(250, self._retomar_login_pendente)
                     if self.processando:
                         self._salvar_checkpoint()
                         self.processando=False;self.btn_lote.configure(state='normal')
@@ -1048,7 +1088,11 @@ class Aplicativo:
             try:self.historico.encerrar('FALHA_TECNICA')
             except (OSError,ValueError):pass
         carimbo=datetime.now().strftime('%d%m%Y_%H%M%S')
-        pasta=self.arquivo_planilha.parent
+        try:
+            _analises,pasta=pastas_de_saida()
+        except OSError:
+            self.status.set('Sem permissão para criar a pasta Logs junto do executável; contate a TI.')
+            return
         destino=pasta/f'RELATORIO_TECNICO_RPA_FALHA_{carimbo}.txt'
         if destino.exists():
             import uuid
@@ -1073,7 +1117,11 @@ class Aplicativo:
             if self.historico and not self.historico.termino:
                 self.historico.encerrar('CONCLUIDA' if completa else 'INTERROMPIDA')
         except (OSError,ValueError): pass
-        destino_base=self.sessao.origem.parent
+        try:
+            _analises,destino_base=pastas_de_saida()
+        except OSError:
+            self.resultado_arquivo_log.set('Sem permissão de gravação na pasta Logs ao lado do executável. Acione a TI.')
+            return
         carimbo=datetime.now().strftime('%d%m%Y_%H%M%S')
         # Não sobrescrever log de outra execução iniciada no mesmo segundo.
         nome=f'RELATORIO_TECNICO_RPA_{carimbo}.txt'
@@ -1083,9 +1131,9 @@ class Aplicativo:
         try:
             relatorio_tecnico(self.estatisticas,self.historico,destino)
             self.estatisticas.relatorio=destino.name
-            self.resultado_arquivo_log.set(f'Planilha de trabalho: {self.sessao.origem.name} · Relatório técnico: {destino.name} (mesma pasta)')
+            self.resultado_arquivo_log.set(f'Análises/{self.sessao.origem.name} · Logs/{destino.name}')
         except (OSError,ValueError):
-            self.resultado_arquivo_log.set('Não foi possível gerar o TXT na pasta da planilha. Verifique permissão de gravação.')
+            self.resultado_arquivo_log.set('Não foi possível gerar o TXT em Logs. Verifique permissão de gravação.')
         n=len(self.sessao.registros)
         e2=etapas['cadastro'];e3=etapas['hospital']
         self.resultado_geral.set(f'{n} registros hospitalares · {etapas["preparo"].encontrados} CPFs disponíveis ({percentual(etapas["preparo"].encontrados,n)})\n'
@@ -1118,7 +1166,7 @@ class Aplicativo:
     def _sobre(self):
         janela=tk.Toplevel(self.root)
         janela.title('Sobre a ferramenta — RPA SISREG')
-        janela.geometry('650x550');janela.minsize(620,520)
+        janela.geometry('700x670');janela.minsize(620,560)
         janela.transient(self.root)
         frame=ttk.Frame(janela,padding=18);frame.pack(fill='both',expand=True)
         ttk.Label(frame,text='RPA SISREG · Sobre a ferramenta',font=('Segoe UI',15,'bold')).pack(anchor='w')
@@ -1128,14 +1176,16 @@ class Aplicativo:
           ('Processo apoiado','Apoia a conferência das internações informadas pelo prestador, automatizando extração de espelhos e consultas ao SISREG.'),
           ('Dados utilizados','Nome, AIH, CPF, CNS, procedimento e dados administrativos estritamente necessários à conferência.'),
           ('Proteção e rastreabilidade','Os dados de pacientes permanecem nos arquivos institucionais locais. Credenciais não são salvas. Histórico técnico reúne horários, quantidades, versão e hashes, sem dados individuais.'),
-          ('Responsabilidade do fiscal','Esta ferramenta é um recurso de apoio à conferência. A identificação automática de dados não substitui a análise do fiscal. Divergências, inconsistências e decisões relacionadas ao atesto permanecem sob análise humana.')]
+          ('Responsabilidade do fiscal','Esta ferramenta é um recurso de apoio à conferência. A identificação automática de dados não substitui a análise do fiscal. Divergências, inconsistências e decisões relacionadas ao atesto permanecem sob análise humana.'),
+          ('Créditos','Desenvolvimento: Enf. Bruno Vinícius. Coautoria: Joice Correa Gomes e Heloisa Hoffmann.'),
+          ('Suporte','bruno.vinicius@joinville.sc.gov.br')]
         for titulo,conteudo in blocos:
             ttk.Label(frame,text=titulo,font=('Segoe UI',10,'bold')).pack(anchor='w',pady=(7,1))
             ttk.Label(frame,text=conteudo,wraplength=560,justify='left').pack(anchor='w')
         ttk.Button(frame,text='Fechar',command=janela.destroy).pack(anchor='e',pady=(10,0))
 
     def encerrar(self):
-        self.parar.set();self.pausa.clear();self.usuario.set('');self.senha.set('')
+        self.parar.set();self.pausa.clear();self.login_pendente=False;self.usuario.set('');self.senha.set('')
         # Caso o processo esteja ativo, a janela aguarda a gravação de resultados recebidos.
         if self.persistencia_falhou and not self.processando:
             from tkinter import messagebox

@@ -63,6 +63,7 @@ class SessaoPlanilha:
         self.hash_planilha = ''
         self.hash_pdf = ''
         self.hash_fonte_original = ''
+        self.diretorio_trabalho: Path | None = None
 
     def carregar(self, caminho: str | Path) -> int:
         from openpyxl import load_workbook  # execução apenas local
@@ -109,6 +110,7 @@ class SessaoPlanilha:
         self.hash_planilha = hashlib.sha256(p.read_bytes()).hexdigest()
         self.hash_pdf = ''
         self.hash_fonte_original = ''
+        self.diretorio_trabalho = None
         return len(self.registros)
 
     def validar_layout_para_saida(self) -> None:
@@ -136,7 +138,8 @@ class SessaoPlanilha:
         if not self.fonte_original or not self.origem:
             return False
         p=Path(self.origem)
-        if (p.parent != self.fonte_original.parent or
+        if (self.diretorio_trabalho is None or
+                p.parent.resolve() != self.diretorio_trabalho.resolve() or
                 not p.name.startswith('Planilha_RPA_') or p.suffix.lower() != '.xlsx'):
             return False
         from persistencia import sha256
@@ -146,9 +149,10 @@ class SessaoPlanilha:
         self.origem=self.fonte_original
         self.fonte_original=None
         self.hash_fonte_original=''
+        self.diretorio_trabalho = None
         return True
 
-    def preparar_copia_de_trabalho(self) -> Path:
+    def preparar_copia_de_trabalho(self, diretorio_saida: Path | None = None) -> Path:
         """Não modifica a fonte selecionada; a cópia é automática, sem nova etapa."""
         import shutil
         from persistencia import sha256
@@ -162,10 +166,13 @@ class SessaoPlanilha:
         # Nome padronizado e ordenável no Explorer, sem nomes de pacientes ou AIHs.
         momento = datetime.now().strftime('%d%m%Y_%H%M%S')
         base = f'Planilha_RPA_{momento}'
-        destino = entrada.with_name(base + '.xlsx')
+        # Compatibilidade com chamadas antigas: na aplicação, passar sempre Análises.
+        pasta = Path(diretorio_saida) if diretorio_saida is not None else entrada.parent
+        pasta.mkdir(parents=True, exist_ok=True)
+        destino = pasta / (base + '.xlsx')
         sufixo = 2
         while destino.exists():
-            destino = entrada.with_name(f'{base}_{sufixo}.xlsx')
+            destino = pasta / f'{base}_{sufixo}.xlsx'
             sufixo += 1
         # x = exclusivo: evita sobrescrever arquivos criados concorrentemente.
         try:
@@ -180,6 +187,7 @@ class SessaoPlanilha:
         self.fonte_original = entrada
         self.hash_fonte_original = self.hash_planilha
         self.origem = destino
+        self.diretorio_trabalho = pasta
         return destino
 
     def complementar_pdf(self, index: dict[str, list[Espelho]], caminho_pdf: str | Path,

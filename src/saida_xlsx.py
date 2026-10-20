@@ -7,7 +7,8 @@ from __future__ import annotations
 from datetime import datetime
 from aih_extract import digitos
 
-CAMPOS_FINAIS = ('rpaSituacao', 'rpaAtualizadoEm', 'rpaProcedimentoSISREG', 'rpaNumeroSolicitacao')
+CAMPOS_FINAIS = ('rpaSituacao', 'rpaAtualizadoEm', 'rpaProcedimentoSISREG')
+COLUNAS_V072 = CAMPOS_FINAIS + ('rpaNumeroSolicitacao',)
 CABECALHOS_LEGADOS = ('rpaSituacao', 'rpaDetalhe', 'rpaOrigemPDF',
     'rpaConsultaAmbulatorial', 'rpaAtualizadoEm', 'rpaConsultaHospitalar',
     'rpaProcedimentoSISREG', 'rpaTempoConsultaSegundos', 'rpaNumeroSolicitacao')
@@ -30,7 +31,9 @@ def identificar_layout(ws) -> str:
     if not existentes:
         modo, ultima_coluna = 'novo', 7
     elif existentes == CAMPOS_FINAIS:
-        modo, ultima_coluna = 'novo', 11
+        modo, ultima_coluna = 'novo', 10
+    elif existentes == COLUNAS_V072:
+        modo, ultima_coluna = 'legado_quatro', 11
     elif existentes in (CABECALHOS_LEGADOS, CABECALHOS_LEGADOS[:-1]):
         modo, ultima_coluna = 'legado', 7 + len(existentes)
     else:
@@ -109,7 +112,24 @@ def adequar_colunas(ws) -> None:
     """Preserva A:G e outras colunas não controladas; migra só layout conhecido."""
     from openpyxl.styles import Alignment, Font, PatternFill, Border, Side
     layout = identificar_layout(ws)
-    if layout == 'legado':
+    if layout == 'legado_quatro':
+        # Na v0.7.2, K guardava Código Solicitação validado pela AIH. Se G
+        # estiver vazia, preservar esse identificador em G antes de eliminar K.
+        # Não sobrescreve informação existente do hospital. Bloquear valores
+        # inesperados para não perder dados silenciosamente.
+        for numero_linha in range(2, ws.max_row + 1):
+            anterior = ws.cell(numero_linha, 11).value
+            if anterior in (None, ''):
+                continue
+            numero = str(anterior).strip()
+            if not numero.isascii() or not numero.isdigit() or not (1 <= len(numero) <= 20):
+                raise LayoutPlanilhaIncompativel('Identificador legado em K incompatível; revisão necessária.')
+            atual = ws.cell(numero_linha, 7)
+            if atual.value in (None, ''):
+                atual.value = numero
+                atual.number_format = '@'
+        ws.delete_cols(11, 1)
+    elif layout == 'legado':
         # H:O tinha 8 colunas nas primeiras entregas; H:P passou a ter 9.
         # Ambas são layouts controlados pelo RPA, não dados do hospital.
         # A migração só ocorre após verificar TODOS os cabeçalhos.
@@ -126,13 +146,12 @@ def adequar_colunas(ws) -> None:
     from openpyxl.comments import Comment
     ws.cell(1,8).comment=Comment('Classificação automatizada dos campos disponíveis. NÃO constitui atesto fiscal.','RPA SISREG')
     ws.cell(1,10).comment=Comment('Comparação entre código hospitalar e código apresentado na ficha SISREG.','RPA SISREG')
-    ws.cell(1,11).comment=Comment('Número da SOLICITAÇÃO extraído da ficha SISREG mediante correspondência da AIH.','RPA SISREG')
-    ws.cell(1,7).comment=Comment('Código autorizador e código de solicitação não são equivalentes por definição. Quando G estiver inicialmente vazia, recebe o Código Solicitação de ficha SISREG com AIH confirmada, por regra operacional solicitada pela gestão. Não constitui comprovação de um autorizador independente. Número da solicitação também é informado em K.','RPA SISREG')
-    larguras={'A':32,'B':20,'C':21,'D':18,'E':19,'F':19,'G':24,'H':43,'I':23,'J':22,'K':25}
+    ws.cell(1,7).comment=Comment('Identificador da solicitação/autorização na regra operacional do hospital: obtido da ficha SISREG após confirmação da AIH. A coleta automatizada não constitui atesto.','RPA SISREG')
+    larguras={'A':32,'B':20,'C':21,'D':18,'E':19,'F':19,'G':24,'H':43,'I':23,'J':22}
     for col,largura in larguras.items():ws.column_dimensions[col].width=largura
     ws.row_dimensions[1].height=34
     ws.freeze_panes='A2'
-    ws.auto_filter.ref=f'A1:K{max(2,ws.max_row)}'
+    ws.auto_filter.ref=f'A1:J{max(2,ws.max_row)}'
     # Modelos oficiais contêm Tabelas do Excel (A:G). Estender a tabela real,
     # em vez de somente as células, mantém filtros e faixas visuais coerentes.
     from openpyxl.worksheet.table import TableColumn
@@ -140,9 +159,9 @@ def adequar_colunas(ws) -> None:
     for tabela in ws.tables.values():
         if not tabela.ref.startswith('A1:'):
             continue
-        nova_faixa=f'A1:K{max(2,ws.max_row)}'
+        nova_faixa=f'A1:J{max(2,ws.max_row)}'
         tabela.ref=nova_faixa
-        cabecalhos=[str(ws.cell(1,col).value) for col in range(1,12)]
+        cabecalhos=[str(ws.cell(1,col).value) for col in range(1,11)]
         tabela.tableColumns=[TableColumn(id=i,name=nome) for i,nome in enumerate(cabecalhos,1)]
         tabela.autoFilter=AutoFilter(ref=nova_faixa)
     ws.sheet_view.showGridLines=False
@@ -153,7 +172,7 @@ def escrever_linha(ws, registro) -> None:
     estado=situacao_final(registro)
     data=data_br(registro.atualizado_em)
     comparacao=comparacao_procedimento(registro)
-    valores=(estado,data,comparacao,registro.solicitacao or None)
+    valores=(estado,data,comparacao)
     color={'Consulta sem divergências':'13704A', 'Dados divergentes no SISREG':'9C4319'}
     for coluna,valor in enumerate(valores,8):
         cel=ws.cell(registro.linha,coluna)
@@ -162,5 +181,4 @@ def escrever_linha(ws, registro) -> None:
         cel.alignment=Alignment(vertical='center',wrap_text=coluna==8)
         cel.fill=PatternFill('solid',fgColor='F1F7FA' if registro.linha%2==0 else 'FFFFFF')
     ws.cell(registro.linha,9).number_format='DD/MM/YYYY HH:MM:SS'
-    ws.cell(registro.linha,11).number_format='@'
     ws.row_dimensions[registro.linha].height=28

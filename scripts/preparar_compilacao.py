@@ -35,7 +35,7 @@ VSVersionInfo(
         StringStruct('FileVersion', '{APP_VERSION}'),
         StringStruct('ProductName', 'RPA SISREG'),
         StringStruct('ProductVersion', '{APP_VERSION}'),
-        StringStruct('LegalCopyright', 'Uso institucional - nao substitui atesto fiscal')
+        StringStruct('LegalCopyright', 'Copyright (c) 2026 Bruno Vinicius e coautoras. MIT para codigo; sem atesto fiscal.')
       ])
     ]),
     VarFileInfo([VarStruct('Translation', [1033, 1200])])

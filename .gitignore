@@ -18,3 +18,11 @@ versao_windows.txt
 execucao_*.json
 *.tmp
 *_RPA_conferencia_*.xlsx
+
+# Saídas locais institucionais — jamais versionar dados de pacientes
+Análises/
+Logs/
+*.backup_antes_RPA.xlsx
+Planilha_RPA_*.xlsx
+RELATORIO_TECNICO_RPA_*.txt
+*.sisregaudit

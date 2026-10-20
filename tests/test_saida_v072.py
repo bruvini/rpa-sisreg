@@ -18,7 +18,7 @@ def reg(st):
                     '11144477735','900000000000001','','',situacao=st)
 
 class TesteSituacoes(unittest.TestCase):
-    def test_versao(self): self.assertEqual(APP_VERSION,'0.7.3')
+    def test_versao(self): self.assertEqual(APP_VERSION,'0.7.4')
     def test_nao_encontrado_no_pdf(self):
         self.assertEqual(situacao_final(reg('AIH_AUSENTE_NO_PDF')),'Não encontrado no espelho de AIH')
     def test_dados_divergentes_pdf(self):
@@ -64,16 +64,16 @@ class TesteXlsx(unittest.TestCase):
         w=load_workbook(self.p)
         try:
             sh=w[r.aba]
-            self.assertEqual([sh.cell(1,c).value for c in range(8,12)],list(CAMPOS_FINAIS))
+            self.assertEqual([sh.cell(1,c).value for c in range(8,11)],list(CAMPOS_FINAIS))
             self.assertIsNone(sh.cell(1,12).value)
             self.assertEqual(sh.cell(r.linha,8).value,'Consulta sem divergências')
             self.assertEqual(sh.cell(r.linha,10).value,'Compatível')
-            self.assertEqual(sh.cell(r.linha,11).value,'670478410')
+            self.assertEqual(sh.cell(r.linha,7).value,'670478410')
             self.assertEqual(sh.cell(r.linha,7).value,'670478410')
             self.assertEqual(sh.cell(r.linha,9).number_format,'DD/MM/YYYY HH:MM:SS')
             self.assertTrue(sh.cell(r.linha,9).is_date)
             self.assertEqual(sh.freeze_panes,'A2')
-            self.assertEqual(sh.auto_filter.ref,f'A1:K{max(2,sh.max_row)}')
+            self.assertEqual(sh.auto_filter.ref,f'A1:J{max(2,sh.max_row)}')
             self.assertEqual(sh.cell(1,8).fill.fgColor.rgb[-6:],'083F6C')
             self.assertEqual(sh.cell(1,7).comment.author,'RPA SISREG')
         finally:w.close()
@@ -87,7 +87,7 @@ class TesteXlsx(unittest.TestCase):
     def test_regravar_nao_gera_colunas_a_mais(self):
         self.salvar();self.salvar()
         w=load_workbook(self.p,read_only=True)
-        try:self.assertEqual([w[self.r.aba].cell(1,c).value for c in range(8,12)],list(CAMPOS_FINAIS))
+        try:self.assertEqual([w[self.r.aba].cell(1,c).value for c in range(8,11)],list(CAMPOS_FINAIS))
         finally:w.close()
     def test_migracao_9_colunas_antigas_sem_apagar_A_G(self):
         from saida_xlsx import CABECALHOS_LEGADOS
@@ -101,7 +101,7 @@ class TesteXlsx(unittest.TestCase):
         try:
             sh=w[self.r.aba]
             self.assertEqual([sh.cell(self.r.linha,c).value for c in range(1,8)],original)
-            self.assertEqual([sh.cell(1,c).value for c in range(8,12)],list(CAMPOS_FINAIS))
+            self.assertEqual([sh.cell(1,c).value for c in range(8,11)],list(CAMPOS_FINAIS))
             self.assertIsNone(sh.cell(1,12).value)
         finally:w.close()
     def test_tabela_excel_se_estende_ate_coluna_k(self):
@@ -116,9 +116,9 @@ class TesteXlsx(unittest.TestCase):
         w=load_workbook(self.p)
         try:
             t=next(iter(w[self.r.aba].tables.values()))
-            self.assertEqual(t.ref,f'A1:K{max(2,w[self.r.aba].max_row)}')
-            self.assertEqual(t.tableColumns[-1].name,'rpaNumeroSolicitacao')
-            self.assertEqual(len(t.tableColumns),11)
+            self.assertEqual(t.ref,f'A1:J{max(2,w[self.r.aba].max_row)}')
+            self.assertEqual(t.tableColumns[-1].name,'rpaProcedimentoSISREG')
+            self.assertEqual(len(t.tableColumns),10)
         finally:w.close()
 
     def test_coluna_h_desconhecida_protegida(self):

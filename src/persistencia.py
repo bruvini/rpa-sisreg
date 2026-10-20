@@ -71,9 +71,9 @@ def gravar_na_origem(sessao, *, motivo='preparacao', backup=True) -> dict:
                 autorizador.value=str(r.autorizador);autorizador.number_format='@'
                 quantidade_hospital+=1
             # Mapeamento OPERACIONAL solicitado pela gestão: quando não existe
-            # código autorizador independente e a ficha confirmou a AIH exata,
+            # código em G e a ficha confirmou a AIH exata,
             # registrar em G o Código Solicitação. O cabeçalho documenta a origem;
-            # esse valor não demonstra um autorizador distinto.
+            # conforme nomenclatura adotada no fluxo do prestador.
             if (autorizador.value in ('',None) and not r.autorizador
                     and r.solicitacao and r.consulta_hospitalar in
                     ('FICHA_CONFERIDA','PROCEDIMENTO_DIVERGENTE')):

@@ -33,19 +33,19 @@ jobs:
         run: python -m unittest discover -s tests -v
       - name: Metadados da versão e data da compilação
         run: python scripts/preparar_compilacao.py
-      - name: Gerar SISREG_Login.exe
-        run: python -m PyInstaller --noconfirm --clean --onefile --windowed --name SISREG_Login --icon assets/Logo-SISREG.ico --add-data "assets;assets" --paths src --version-file versao_windows.txt --collect-all playwright --collect-all pymupdf --collect-all openpyxl src/sisreg_login.py
+      - name: Gerar RPA_SISREG.exe
+        run: python -m PyInstaller --noconfirm --clean --onefile --windowed --name RPA_SISREG --icon assets/Logo-SISREG.ico --add-data "assets;assets" --paths src --version-file versao_windows.txt --collect-all playwright --collect-all pymupdf --collect-all openpyxl src/sisreg_login.py
       - name: Registrar SHA-256 do executavel
         shell: pwsh
         run: |
-          $sha = (Get-FileHash -Algorithm SHA256 dist/SISREG_Login.exe).Hash
-          "SISREG_Login.exe SHA256: $sha" | Out-File -FilePath dist/SHA256.txt -Encoding utf8
+          $sha = (Get-FileHash -Algorithm SHA256 dist/RPA_SISREG.exe).Hash
+          "RPA_SISREG.exe SHA256: $sha" | Out-File -FilePath dist/SHA256.txt -Encoding utf8
       - name: Disponibilizar EXE Windows
         uses: actions/upload-artifact@v4
         with:
-          name: SISREG_Login_Windows
+          name: RPA_SISREG_Windows
           path: |
-            dist/SISREG_Login.exe
+            dist/RPA_SISREG.exe
             dist/SHA256.txt
           if-no-files-found: error
           retention-days: 7

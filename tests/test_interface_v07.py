@@ -65,9 +65,13 @@ class TesteFechamentoComLog(unittest.TestCase):
                 app.estatisticas.concluir('cadastro',2,consultados=1,encontrados=1)
                 app.estatisticas.registrar_total('hospital',1)
                 app.estatisticas.concluir('hospital',1,consultados=1,encontrados=1)
-                app._finalizar_relatorio()
-                app._finalizar_relatorio() # idempotente
-                arquivos=list(pasta.glob('RELATORIO_TECNICO_RPA_*.txt'))
+                from unittest.mock import patch
+                saida=pasta/'Análises';saida.mkdir()
+                logs=pasta/'Logs';logs.mkdir()
+                with patch('sisreg_login.pastas_de_saida',return_value=(saida,logs)):
+                    app._finalizar_relatorio()
+                    app._finalizar_relatorio() # idempotente
+                arquivos=list(logs.glob('RELATORIO_TECNICO_RPA_*.txt'))
                 self.assertEqual(len(arquivos),1)
                 self.assertEqual(app.abas.tab(3,'state'),'normal')
                 self.assertIn('Tempo total',app.resultado_tempos.get())

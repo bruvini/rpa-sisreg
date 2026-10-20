@@ -69,7 +69,7 @@ class TesteGravacaoNaOrigem(unittest.TestCase):
         self.assertEqual(str(ws.cell(r.linha,6).value),'10')
         self.assertEqual(ws.cell(r.linha,7).value,'0004532108')
         self.assertEqual(str(ws.cell(r.linha,3).value),origem)
-        self.assertEqual(ws.cell(1,11).value,'rpaNumeroSolicitacao')
+        self.assertIsNone(ws.cell(1,11).value)
         self.assertTrue(self.p.with_name('hospital.backup_antes_RPA.xlsx').exists())
         w.close()
     def test_proc_diferente_revisar_sem_sobrescrever(self):

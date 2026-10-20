@@ -101,18 +101,23 @@ class TesteFluxoTk(unittest.TestCase):
             shutil.copy2(modelo,amostra)
             self.app.arquivo_planilha=amostra
             self.app.arquivo_pdf=Path(__file__).parent/'fixtures'/'espelho_sintetico.pdf'
-            self.app._preparar()
-            fim=time.monotonic()+14
-            while self.app.carregando and time.monotonic()<fim:
-                self.tk.update()
-                time.sleep(.06)
+            from unittest.mock import patch
+            saida=Path(d)/'Análises';saida.mkdir()
+            logs=Path(d)/'Logs';logs.mkdir()
+            with patch('sisreg_login.pastas_de_saida',return_value=(saida,logs)):
+                self.app._preparar()
+                # A thread também chama a função; manter o patch durante processamento.
+                fim=time.monotonic()+14
+                while self.app.carregando and time.monotonic()<fim:
+                    self.tk.update()
+                    time.sleep(.06)
             self.assertFalse(self.app.carregando, self.app.status.get())
             self.assertTrue(self.app.preparo_concluido, self.app.status.get())
             self.assertEqual(str(self.app.abas.tab(1,'state')),'normal')
             self.assertEqual(str(self.app.abas.tab(2,'state')),'disabled')
             self.assertIn('15 s/AIH',self.app.resultado_tempo.get())
             self.assertIn('Extração automática concluída',self.app.resultado_titulo.get())
-            self.assertTrue(any(x.name.startswith('Planilha_RPA_') and x.suffix=='.xlsx' for x in amostra.parent.iterdir()))
+            self.assertTrue(any(x.name.startswith('Planilha_RPA_') and x.suffix=='.xlsx' for x in saida.iterdir()))
 
 
 if __name__ == '__main__':
