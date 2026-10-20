@@ -7,11 +7,38 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from datetime import timezone
 import os
+import platform
+import sys
 import tempfile
 from app_info import APP_VERSION
 
 MANUAL_SEGUNDOS = {'preparo': 15, 'cadastro': 10, 'hospital': 10}
+ACOES_SEGURAS = frozenset({'INICIO_EXECUCAO', 'PDF_INDEXACAO', 'CPF_CRUZAMENTO',
+    'SALVAMENTO_XLSX', 'LOGIN_SUBMETIDO', 'MENU_AUTENTICADO', 'SESSAO_ENCERRADA',
+    'CADASTRO_CPF', 'BUSCA_HOSPITALAR', 'AIH_EXATA', 'LEITURA_FICHA',
+    'FICHA_HOSPITALAR', 'FIM_EXECUCAO',
+    'SESSAO_FORA_DOMINIO', 'SESSAO_HTTPS_OFICIAL', 'INTERRUPCAO'})
+RESULTADOS_SEGUROS = frozenset({'INICIO', 'OK', 'PENDENCIA', 'TIMEOUT', 'ERRO',
+    'BLOQUEADO', 'SEM_RESULTADO', 'INTERRUPCAO'})
+CATEGORIAS_SEGURAS = frozenset({'NENHUM', 'TIMEOUT_SELETOR', 'TIMEOUT_NAVEGADOR',
+    'SELETOR_NAO_ENCONTRADO', 'SESSAO_NAO_AUTORIZADA', 'IDENTIDADE_NAO_CONFIRMADA',
+    'RESULTADO_AMBIGUO', 'FICHA_NAO_ABERTA', 'AIH_NAO_CONFIRMADA',
+    'PROCEDIMENTO_DIVERGENTE', 'CAMPOS_FICHA_INCOMPLETOS', 'PLANILHA_BLOQUEADA',
+    'PERSISTENCIA_FALHOU', 'FALHA_NAVEGACAO', 'ERRO_NAO_CLASSIFICADO',
+    'CAPTURA_SEM_RESULTADO', 'INTERRUPCAO_SOLICITADA'})
+
+
+def categoria_excecao(tipo: str) -> str:
+    # Apenas tipo de exceção conhecido. NÃO inclui str(exception) nem traceback.
+    return {'TimeoutError': 'TIMEOUT_NAVEGADOR', 'PlaywrightTimeout': 'TIMEOUT_NAVEGADOR',
+            'NavegacaoInesperada': 'SELETOR_NAO_ENCONTRADO',
+            'FormularioInesperado': 'SESSAO_NAO_AUTORIZADA',
+            'AlteracaoExterna': 'PLANILHA_BLOQUEADA',
+            'PermissionError': 'PLANILHA_BLOQUEADA'}.get(tipo, 'ERRO_NAO_CLASSIFICADO')
+
+
 ROTULOS = {'preparo':'PDF e CPF', 'cadastro':'Cadastro e CNS', 'hospital':'Solicitação hospitalar'}
 
 
@@ -53,6 +80,25 @@ class Estatisticas:
         self.etapas = {nome: ContadorEtapa() for nome in MANUAL_SEGUNDOS}
         self.situacao = 'EM_ANDAMENTO'
         self.relatorio = ''
+        self.diagnosticos: list[dict] = []
+
+    def diagnosticar(self, acao: str, resultado: str, *, ordinal: int | None = None,
+                    segundos: float | None = None, categoria: str = 'NENHUM') -> None:
+        # Não aceitar texto livre fornecido por DOM, campos do hospital ou exceções.
+        if acao not in ACOES_SEGURAS or resultado not in RESULTADOS_SEGUROS:
+            raise ValueError('Operação diagnóstica desconhecida')
+        if categoria not in CATEGORIAS_SEGURAS:
+            categoria = 'ERRO_NAO_CLASSIFICADO'
+        if ordinal is not None and (type(ordinal) is not int or not 1 <= ordinal <= 10000000):
+            raise ValueError('Índice ordinal inválido')
+        if segundos is not None and not 0 <= float(segundos) <= 86400:
+            raise ValueError('Tempo inválido')
+        self.diagnosticos.append({
+            'utc': datetime.now(timezone.utc).isoformat(timespec='milliseconds'),
+            'acao': acao, 'resultado': resultado, 'ordinal': ordinal,
+            'segundos': round(float(segundos), 3) if segundos is not None else None,
+            'categoria': categoria,
+        })
 
     def registrar_total(self, chave, total):
         if chave not in self.etapas or not isinstance(total,int) or total < 0:
@@ -121,6 +167,7 @@ def relatorio_tecnico(estat: Estatisticas, historico, destino: Path) -> Path:
             'Documento administrativo, sem dados identificáveis dos pacientes.',
             'A coleta automatizada não constitui decisão ou atesto fiscal.', '',
             f'Versão: {APP_VERSION}',
+            f'Ambiente: {platform.system()} | Python {sys.version_info.major}.{sys.version_info.minor} | empacotado={bool(getattr(sys, "frozen", False))}',
             f'Execução: {historico.id if historico else "Não disponível"}',
             f'Início: {inicio}',f'Término: {fim}',f'Situação: {estat.situacao}',
             f'Tempo total decorrido (inclui intervalos entre etapas): {duracao(estat.total_segundos)}',
@@ -144,6 +191,25 @@ def relatorio_tecnico(estat: Estatisticas, historico, destino: Path) -> Path:
             # Fases são nomes controlados, e jamais mensagens de exceção.
             if fase in ('planilha','indexacao_pdf','cruzamento','gravacao'):
                 linhas.append(f'  {fase}: {duracao(segundos)}')
+    linhas.extend(['', 'DIAGNÓSTICO DE AUTOMAÇÃO (SEM IDENTIFICADORES)',
+        'Formato: UTC | operação | resultado | ordinal (quando aplicável) | duração (s) | categoria.',
+        'Categorias codificadas, sem argumentos de navegação, valores do DOM, credenciais ou stack trace.',
+        'Ambiente: navegador institucional em sessão HTTPS oficial; validação de origem por operação.',
+        'A interpretação do resultado depende dos seletores oficiais disponíveis na sessão.'])
+    if estat.diagnosticos:
+        from collections import Counter
+        falhas = Counter(d['categoria'] for d in estat.diagnosticos if d['resultado'] in ('ERRO','TIMEOUT','PENDENCIA') and d['categoria'] != 'NENHUM')
+        linhas.append('Resumo de ocorrências técnicas por categoria (pode haver várias por registro):')
+        for categoria, total in sorted(falhas.items()):
+            linhas.append(f'  {categoria}: {total}')
+        linhas.append('Trilha cronológica das operações:')
+        for evento in estat.diagnosticos:
+            ord_txt = str(evento['ordinal']) if evento['ordinal'] is not None else '-'
+            segundos_txt = f"{evento['segundos']:.3f}" if evento['segundos'] is not None else '-'
+            linhas.append(f"{evento['utc']} | {evento['acao']} | {evento['resultado']} | "
+                         f"ordinal={ord_txt} | duracao={segundos_txt} | {evento['categoria']}")
+    else:
+        linhas.append('Nenhum diagnóstico adicional disponível para esta execução.')
     linhas.extend(['', 'EVENTOS TÉCNICOS (SEM PII)', *(eventos or ['Nenhum evento local disponível']),
                    '', 'EXCEÇÕES DEVEM SER TRATADAS PELO FISCAL. NÃO HÁ ATESTO AUTOMÁTICO.',''])
     destino.parent.mkdir(parents=True,exist_ok=True)

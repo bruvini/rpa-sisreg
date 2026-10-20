@@ -15,7 +15,7 @@ from openpyxl import load_workbook
 COLUNAS_AUDITORIA = ('rpaSituacao', 'rpaDetalhe', 'rpaOrigemPDF',
                    'rpaConsultaAmbulatorial', 'rpaAtualizadoEm',
                    'rpaConsultaHospitalar', 'rpaProcedimentoSISREG',
-                   'rpaTempoConsultaSegundos')
+                   'rpaTempoConsultaSegundos', 'rpaNumeroSolicitacao')
 
 class AlteracaoExterna(Exception):
     pass
@@ -54,7 +54,7 @@ def gravar_na_origem(sessao, *, motivo='preparacao', backup=True) -> dict:
                     raise AlteracaoExterna(f'Coluna de auditoria ocupada em {aba}, {col}. Não sobrescrevemos.')
                 ws.cell(1,col).value = cab
             ws.freeze_panes = 'A2'
-            ws.auto_filter.ref = f'A1:O{max(2, ws.max_row)}'
+            ws.auto_filter.ref = f'A1:P{max(2, ws.max_row)}'
         for r in sessao.registros:
             ws = wb[r.aba]
             cpf = ws.cell(r.linha,4)
@@ -78,7 +78,8 @@ def gravar_na_origem(sessao, *, motivo='preparacao', backup=True) -> dict:
                 quantidade_hospital+=1
             valores=(r.situacao, r.detalhe, r.origem_pdf,
                      r.consulta_ambulatorial, r.atualizado_em, r.consulta_hospitalar,
-                     r.procedimento_sisreg, str(r.tempo_consulta) if r.tempo_consulta else '')
+                     r.procedimento_sisreg, str(r.tempo_consulta) if r.tempo_consulta else '',
+                     r.solicitacao)
             for col,valor in enumerate(valores,8):
                 valor = str(valor or '')
                 if valor.startswith(('=','+','-','@')):

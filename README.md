@@ -95,3 +95,15 @@ Executar a aplicação na estação da SMS exige autorização, compatibilidade 
 `python -m unittest discover -s tests -v` usa apenas PDFs/planilhas e telas **fictícios**, sem conectar ao SISREG real. Abrange regras das versões anteriores, SHA-256, original intacto, cópia de trabalho, logs sanitizados, limpeza seletiva, histórico, versão e exportação mínima. Execute também a homologação com cinco AIHs autorizadas no computador institucional; os testes sintéticos não provam correspondência da estrutura real.
 
 **Não utilizar dados reais de pacientes em testes, issues, commits, GitHub Actions ou exemplos de documentação.** Não desativar antivírus, proteções de rede ou controles de acesso para fazer funcionar. O histórico administrativo não substitui log de auditoria autenticado/inviolável; caso se exija custódia institucional, a TI deve aprovar armazenamento protegido, retenção e ACLs.
+
+## Atualização v0.7.1
+
+O fluxo operacional permanece o mesmo. A coluna **Solicitação** da etapa 3 mostra o **Código Solicitação** extraído da ficha somente após comprovação de AIH exata, e é persistida em `rpaNumeroSolicitacao` (P) na cópia XLSX. O campo original `codigoAutorizador` (G) não será completado com esse valor: sua fonte precisa ser comprovada independentemente.
+
+O botão de exportação avulsa de pendências foi retirado da interface; as situações e a trilha já são guardadas na planilha de trabalho. A última aba apresenta cobertura, tempo e arquivos com composição mais legível.
+
+O relatório `.txt` agora possui seção **DIAGNÓSTICO DE AUTOMAÇÃO**: timestamps UTC, operações, status, ordinal, duração em segundos e categoria de erro estritamente enumerada. O histórico administrativo local continua separado. Não grava nome, AIH, CPF, CNS, senha, cookies, HTML ou URLs da sessão. Pode-se perder eventos em memória se o processo terminar abruptamente sem finalizar.
+
+O GitHub Actions incorpora `assets/logo_sisreg_header.png` e `assets/Logo-SISREG.ico` no EXE via `--add-data` e `--icon`. A origem do PNG/ICO é material fornecido pelo responsável pelo projeto; não incluir fotos de pacientes ou documentos nos artefatos.
+
+Não utilizar dados reais de pacientes em testes, issues, commits, GitHub Actions ou exemplos de documentação. A homologação da leitura de campos do SISREG permanece restrita à estação institucional autorizada. Consulte [GUIA_v071.md](GUIA_v071.md) para verificações e retorno à v0.7.0.

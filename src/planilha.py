@@ -21,7 +21,7 @@ COLUNAS = ('nomePaciente', 'numeroAIH', 'numeroProcedimento', 'numeroCPF',
 COLUNAS_ADICIONAIS = ('rpaSituacao', 'rpaDetalhe', 'rpaOrigemPDF',
                       'rpaConsultaAmbulatorial', 'rpaAtualizadoEm',
                       'rpaConsultaHospitalar', 'rpaProcedimentoSISREG',
-                      'rpaTempoConsultaSegundos')
+                      'rpaTempoConsultaSegundos', 'rpaNumeroSolicitacao')
 
 
 def valor_texto(valor: Any) -> str:
@@ -54,6 +54,7 @@ class Registro:
     consulta_hospitalar: str = ''
     procedimento_sisreg: str = ''
     tempo_consulta: float = 0.0
+    solicitacao: str = ''
 
 
 class SessaoPlanilha:
@@ -209,6 +210,9 @@ class SessaoPlanilha:
         registro.consulta_hospitalar = resultado.situacao
         registro.atualizado_em = datetime.now().isoformat(timespec='seconds')
         registro.procedimento_sisreg = resultado.procedimento or ''
+        # Solicitação é vinculada somente quando há AIH exata e ficha confirmada.
+        if resultado.situacao in ('FICHA_CONFERIDA', 'PROCEDIMENTO_DIVERGENTE'):
+            registro.solicitacao = resultado.solicitacao or ''
         registro.detalhe = resultado.detalhe
         if resultado.situacao not in ('FICHA_CONFERIDA', 'PROCEDIMENTO_DIVERGENTE'):
             registro.situacao = 'PENDENTE_' + resultado.situacao

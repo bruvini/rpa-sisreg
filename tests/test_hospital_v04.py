@@ -161,4 +161,5 @@ class TesteFichaHospitalar(unittest.TestCase):
             r=obter_detalhes(_FichePage(),'9000000000123','0408050063')
         self.assertEqual(r.situacao,'PROCEDIMENTO_DIVERGENTE')
         self.assertEqual(r.carater,'10')
-        self.assertEqual(r.autorizador,'0004532108')
+        self.assertEqual(r.solicitacao,'0004532108')
+        self.assertEqual(r.autorizador,'')  # Código da solicitação não é autorizador

@@ -14,6 +14,7 @@ import time
 import os
 from pathlib import Path
 from tkinter import filedialog
+from importlib import resources
 from datetime import datetime
 from sisreg_navigation import (consultar_cadastro, ler_cadastro_contexto, autenticao_ativa, NavegacaoInesperada)
 from aih_extract import ler_espelhos_pdf, cpf_valido, cns_formato
@@ -26,8 +27,8 @@ from tkinter import ttk
 from urllib.parse import urlparse
 from app_info import APP_VERSION, rotulo_versao
 from apresentacao import rotulo_situacao
-from governanca import HistoricoExecucao, exportar_pendencias, limpeza_temporarios
-from estatisticas import Estatisticas, relatorio_tecnico, duracao as duracao_stats, percentual, MANUAL_SEGUNDOS
+from governanca import HistoricoExecucao, limpeza_temporarios
+from estatisticas import Estatisticas, relatorio_tecnico, duracao as duracao_stats, percentual, MANUAL_SEGUNDOS, categoria_excecao
 
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
 
@@ -122,6 +123,12 @@ class Aplicativo:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         root.title(f'RPA SISREG · Conferência em lote — v{APP_VERSION}')
+        if sys.platform == 'win32':
+            try:
+                raiz = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parents[1]))
+                root.iconbitmap(str(raiz / 'assets' / 'Logo-SISREG.ico'))
+            except (OSError, tk.TclError):
+                pass
         # Caber na área útil mesmo com escalonamento/monitor institucional.
         largura=min(1160,max(820,root.winfo_screenwidth()-70))
         altura=min(850,max(590,root.winfo_screenheight()-125))
@@ -182,6 +189,7 @@ class Aplicativo:
         self.resultado_tempos=tk.StringVar(value='Os tempos serão calculados durante a execução.')
         self.resultado_arquivo_log=tk.StringVar(value='O relatório TXT ficará na pasta da cópia XLSX.')
         self.dados_atuais={'cpf':0,'cns':0,'pendentes':0,'falhas':0,'total':0}
+        self.estatisticas.diagnosticar('INICIO_EXECUCAO', 'INICIO')
         self._montar()
         self.abas.tab(1,state='disabled')
         self.abas.tab(2,state='disabled')
@@ -199,11 +207,24 @@ class Aplicativo:
         estilo.configure('TEntry',font=('Segoe UI',11),padding=5)
         estilo.configure('Treeview',font=('Segoe UI',9),rowheight=24)
         estilo.configure('Treeview.Heading',font=('Segoe UI',9,'bold'))
-        topo=tk.Frame(self.root,bg=AZUL,height=77);topo.pack(fill='x');topo.pack_propagate(False)
-        tk.Label(topo,text='RPA SISREG  |  Conferência em lote',bg=AZUL,fg='white',
-                 font=('Segoe UI',17,'bold')).pack(anchor='w',padx=24,pady=(10,0))
-        tk.Label(topo,text=f'v{APP_VERSION} · CPF, CNS e solicitação hospitalar · cópia de trabalho automática',
-                 bg=AZUL,fg='#d4e8f7',font=('Segoe UI',10)).pack(anchor='w',padx=24)
+        topo=tk.Frame(self.root,bg=AZUL,height=82);topo.pack(fill='x');topo.pack_propagate(False)
+        # Logo PNG incorporado ao EXE; sem dependência de arquivos externos no PC da Joice.
+        self.logo_cabecalho = None
+        try:
+            import sys
+            base = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parents[1]))
+            caminho_logo = base / 'assets' / 'logo_sisreg_header.png'
+            self.logo_cabecalho = tk.PhotoImage(file=str(caminho_logo))
+        except (OSError, tk.TclError):
+            pass  # O programa funciona com cabeçalho textual se o PNG estiver indisponível.
+        if self.logo_cabecalho:
+            tk.Label(topo,image=self.logo_cabecalho,bg=AZUL).pack(side='left',padx=(14,10),pady=2)
+        titulo=tk.Frame(topo,bg=AZUL)
+        titulo.pack(side='left',fill='y')
+        tk.Label(titulo,text='RPA SISREG  |  Conferência em lote',bg=AZUL,fg='white',
+                 font=('Segoe UI',17,'bold')).pack(anchor='w',pady=(12,0))
+        tk.Label(titulo,text=f'v{APP_VERSION} · CPF, CNS e solicitação hospitalar · cópia de trabalho automática',
+                 bg=AZUL,fg='#d4e8f7',font=('Segoe UI',10)).pack(anchor='w')
         tk.Button(topo, text='ⓘ Sobre', command=self._sobre, bg='#174f79', fg='white',
                   borderwidth=0, cursor='hand2', font=('Segoe UI',10)).place(relx=0.985, y=22, anchor='ne')
         corpo=ttk.Frame(self.root,padding=13);corpo.pack(fill='both',expand=True)
@@ -344,21 +365,32 @@ class Aplicativo:
         self.tabela_hospital.configure(yscrollcommand=barra_hosp.set)
         self.tabela_hospital.pack(side='left',fill='both',expand=True)
         barra_hosp.pack(side='right',fill='y')
-        ttk.Button(c,text='Exportar somente pendências (XLSX)',command=self._exportar_pendencias).pack(anchor='w',pady=(10,0))
         ttk.Label(c,text='Conferência automatizada ≠ análise fiscal concluída. O tempo medido é real. A estimativa manual usa 15 segundos por AIH como premissa fixa '
                   'e não comprova economia de trabalho. Não são alteradas '
                   'solicitações no SISREG. Feche o Excel durante os lotes.',wraplength=920).pack(anchor='w',pady=(14,0))
-        ttk.Label(d,text='Resumo da execução · a decisão fiscal permanece humana',
-                  font=('Segoe UI',15,'bold')).pack(anchor='w',pady=(5,16))
-        bloco=tk.Frame(d,bg='#eff5f9',highlightbackground='#ccdae7',highlightthickness=1)
-        bloco.pack(fill='x')
-        tk.Label(bloco,textvariable=self.resultado_geral,bg='#eff5f9',fg=AZUL,
-                 font=('Segoe UI',12,'bold'),justify='left',wraplength=960).pack(anchor='w',padx=16,pady=(16,7))
-        tk.Label(bloco,textvariable=self.resultado_tempos,bg='#eff5f9',fg='#315267',
-                 font=('Segoe UI',11),justify='left',wraplength=960).pack(anchor='w',padx=16,pady=(0,12))
-        ttk.Label(d,textvariable=self.resultado_arquivo_log,wraplength=960).pack(anchor='w',pady=(16,8))
-        ttk.Label(d,text='Resultado automatizado: dados coletados, ocorrências e pendências. '
-                  'A etapa de atesto não é realizada pelo robô.',wraplength=920).pack(anchor='w',pady=(15,0))
+        ttk.Label(d,text='Resultados da execução',font=('Segoe UI',16,'bold')).pack(anchor='w',pady=(3,3))
+        ttk.Label(d,text='Resumo operacional · a decisão fiscal permanece humana',
+                  foreground='#536b7d').pack(anchor='w',pady=(0,15))
+        resumo=tk.Frame(d,bg='#f4f7fa',highlightbackground='#d1dde8',highlightthickness=1)
+        resumo.pack(fill='x',pady=(0,12))
+        tk.Label(resumo,text='COBERTURA E PENDÊNCIAS',bg='#f4f7fa',fg='#506c83',
+                 font=('Segoe UI',9,'bold')).pack(anchor='w',padx=15,pady=(12,4))
+        tk.Label(resumo,textvariable=self.resultado_geral,bg='#f4f7fa',fg=AZUL,
+                 font=('Segoe UI',11,'bold'),justify='left',wraplength=900).pack(anchor='w',padx=15,pady=(0,12))
+        tempos=tk.Frame(d,bg='#ffffff',highlightbackground='#d1dde8',highlightthickness=1)
+        tempos.pack(fill='x',pady=(0,12))
+        tk.Label(tempos,text='TEMPO DE EXECUÇÃO',bg='#ffffff',fg='#506c83',
+                 font=('Segoe UI',9,'bold')).pack(anchor='w',padx=15,pady=(12,4))
+        tk.Label(tempos,textvariable=self.resultado_tempos,bg='#ffffff',fg='#315267',
+                 font=('Segoe UI',11),justify='left',wraplength=900).pack(anchor='w',padx=15,pady=(0,12))
+        arquivos=tk.Frame(d,bg='#ffffff',highlightbackground='#d1dde8',highlightthickness=1)
+        arquivos.pack(fill='x')
+        tk.Label(arquivos,text='ARQUIVOS GERADOS',bg='#ffffff',fg='#506c83',
+                 font=('Segoe UI',9,'bold')).pack(anchor='w',padx=15,pady=(12,4))
+        tk.Label(arquivos,textvariable=self.resultado_arquivo_log,bg='#ffffff',fg=AZUL,
+                 font=('Segoe UI',10),justify='left',wraplength=900).pack(anchor='w',padx=15,pady=(0,12))
+        ttk.Label(d,text='Dados coletados automaticamente não constituem aprovação ou atesto. '
+                  'Ocorrências e divergências continuam sob análise do fiscal.',wraplength=930).pack(anchor='w',pady=(15,0))
         rodape=ttk.Frame(corpo);rodape.pack(side='bottom',fill='x',pady=(10,0))
         ttk.Label(rodape,text=f'v{APP_VERSION} · Atesto é decisão do fiscal.',
                   foreground='#4c6375').pack(side='left',padx=(0,10))
@@ -420,11 +452,9 @@ class Aplicativo:
             tabela.insert('','end',iid=iid,values=dados)
 
     def _linha_hospital(self, r):
-        # Não inferir o número de solicitação a partir da AIH: o modelo de
-        # sete colunas não oferece número de solicitação separado.
+        # Somente o código de solicitação comprovado na ficha, nunca a AIH.
         estado = r.consulta_hospitalar
-        referencia = ('AIH localizada na ficha' if estado in ('FICHA_CONFERIDA','PROCEDIMENTO_DIVERGENTE')
-                      else 'Ainda não confirmada' if estado else 'Aguardando')
+        referencia = r.solicitacao if r.solicitacao else '—'
         return (r.aih, r.nome, r.cns, r.carater or '—',
                 r.procedimento_sisreg or 'Não coletado', referencia,
                 rotulo_situacao(r.situacao) if estado else 'Aguardando consulta')
@@ -602,12 +632,28 @@ class Aplicativo:
                                 validas=[pg for pg in contexto.pages if not pg.is_closed() and endereco_oficial(pg.url)]
                                 if not validas:raise NavegacaoInesperada('Sessão SISREG encerrada.')
                                 pagina=validas[-1]
-                                resultado=consultar_solicitacao_hospitalar(pagina,r.cns,r.aih,r.procedimento)
+                                def observador(acao,estado,tempo_fase,categoria):
+                                    self.eventos.put(('diagnostico_tecnico',
+                                        (acao,estado,j,tempo_fase,categoria)))
+                                resultado=consultar_solicitacao_hospitalar(
+                                    pagina,r.cns,r.aih,r.procedimento,observador=observador)
                                 erros_seguidos=0
                             except Exception as exc:
                                 erros_seguidos+=1
                                 resultado=ResultadoHospital('FALHA_NAVEGACAO',
-                                              'Consulta não finalizada: '+type(exc).__name__+'. Revisar a tela do SISREG.')
+                                              'Consulta não finalizada. Revisar a tela do SISREG.')
+                                self.eventos.put(('diagnostico_tecnico',('FICHA_HOSPITALAR',
+                                   'ERRO',j,time.perf_counter()-inicio,categoria_excecao(type(exc).__name__))))
+                            falha = resultado.situacao not in ('FICHA_CONFERIDA','PROCEDIMENTO_DIVERGENTE')
+                            categoria = ({'PROCEDIMENTO_DIVERGENTE':'PROCEDIMENTO_DIVERGENTE',
+                                'FICHA_NAO_ABERTA':'FICHA_NAO_ABERTA',
+                                'AIH_NAO_COMPROVADA_FICHA':'AIH_NAO_CONFIRMADA',
+                                'CAMPOS_FICHA_INCOMPLETOS':'CAMPOS_FICHA_INCOMPLETOS',
+                                'CAMPOS_FICHA_NAO_CONFIRMADOS':'SELETOR_NAO_ENCONTRADO',
+                                'FALHA_NAVEGACAO':'FALHA_NAVEGACAO'}).get(resultado.situacao,
+                                'ERRO_NAO_CLASSIFICADO' if falha else 'NENHUM')
+                            self.eventos.put(('diagnostico_tecnico',('FICHA_HOSPITALAR',
+                                'PENDENCIA' if falha else 'OK',j,time.perf_counter()-inicio,categoria)))
                             self.eventos.put(('hospital_item',(idx,resultado,time.perf_counter()-inicio,j,len(indices))))
                             if erros_seguidos>=3:
                                 self.eventos.put(('hospital_alerta','Três falhas seguidas; lote hospitalar suspenso.'))
@@ -625,6 +671,7 @@ class Aplicativo:
                         while self.pausa.is_set() and not self.parar.wait(0.25):pass
                         if self.parar.is_set():break
                         r=self.sessao.registros[idx]
+                        inicio_item=time.perf_counter()
                         identificador=r.cpf
                         try:
                             validas=[pg for pg in contexto.pages if not pg.is_closed() and endereco_oficial(pg.url)]
@@ -638,6 +685,10 @@ class Aplicativo:
                             cns,motivo=None,'FALHA_DE_NAVEGACAO_OU_TEMPO'
                             erros_seguidos+=1
                             self.eventos.put(('diagnostico_navegacao', type(exc).__name__))
+                        self.eventos.put(('diagnostico_tecnico',('CADASTRO_CPF',
+                            'OK' if cns else 'PENDENCIA',j,time.perf_counter()-inicio_item,
+                            'NENHUM' if cns else ('FALHA_NAVEGACAO' if motivo=='FALHA_DE_NAVEGACAO_OU_TEMPO'
+                            else 'IDENTIDADE_NAO_CONFIRMADA'))))
                         self.eventos.put(('lote_item',(idx,cns,motivo,j,len(indices))))
                         processados=j
                         if erros_seguidos>=3:
@@ -725,6 +776,7 @@ class Aplicativo:
         # Interrompe o processo e encerra o navegador, evitando pesquisas sem supervisão.
         self.parar.set();self.pausa.clear()
         self._evento_seguro('INTERRUPCAO','geral')
+        self.estatisticas.diagnosticar('INTERRUPCAO','INTERRUPCAO',categoria='INTERRUPCAO_SOLICITADA')
         self.status.set('Solicitada interrupção; os resultados recebidos serão salvos.')
 
     def _salvar_checkpoint(self):
@@ -737,6 +789,7 @@ class Aplicativo:
             self.pausa.clear()
             self.status.set('Não foi possível gravar a planilha de trabalho. Feche o Excel e tente novamente; a execução foi interrompida.')
             self._evento_seguro('FALHA_SALVAMENTO', 'geral')
+            self.estatisticas.diagnosticar('SALVAMENTO_XLSX','ERRO',categoria='PERSISTENCIA_FALHOU')
             return False
 
     def _tentar_salvar(self):
@@ -750,7 +803,11 @@ class Aplicativo:
             while passos < 3:
                 evento,dado=self.eventos.get_nowait()
                 passos+=1
-                if evento=='preparo_fase':
+                if evento=='diagnostico_tecnico':
+                    acao,resultado,indice,segundos,categoria=dado
+                    self.estatisticas.diagnosticar(acao,resultado,ordinal=indice,
+                                                  segundos=segundos,categoria=categoria)
+                elif evento=='preparo_fase':
                     self.atividade_preparo.set(dado[0])
                 elif evento=='preparo_inicio':
                     itens=self.tabela.get_children()
@@ -782,6 +839,9 @@ class Aplicativo:
                         f'✓ Nova planilha criada: {sessao.origem.name} · Arquivo hospitalar original preservado.')
                     self.cartao_resultado.pack(fill='x',pady=(0,8),before=self.grade)
                     self.atividade_preparo.set('Concluído. Cópia de trabalho atualizada.')
+                    for etapa,fase in (('PDF_INDEXACAO','indexacao_pdf'),
+                                       ('CPF_CRUZAMENTO','cruzamento'),('SALVAMENTO_XLSX','gravacao')):
+                        self.estatisticas.diagnosticar(etapa,'OK',segundos=fases.get(fase,0))
                     self.estatisticas.registrar_total('preparo',len(sessao.registros))
                     self.estatisticas.concluir('preparo',segundos,consultados=len(sessao.registros),
                         encontrados=cpf_presentes,pendencias=total-cpf_presentes,fases=fases)
@@ -806,8 +866,11 @@ class Aplicativo:
                         except OSError:
                             self.status.set('Histórico local não pôde ser atualizado; avise a TI.')
                 elif evento=='login_enviado':
+                    self.estatisticas.diagnosticar('LOGIN_SUBMETIDO','OK')
                     self.status.set('Login enviado; aguardando o menu autenticado para iniciar o lote automaticamente.')
                 elif evento=='autenticado':
+                    self.estatisticas.diagnosticar('MENU_AUTENTICADO','OK')
+                    self.estatisticas.diagnosticar('SESSAO_HTTPS_OFICIAL','OK')
                     self.browser_ready=True
                     self.status.set('Acesso identificado. Iniciando automaticamente a pesquisa de todos os CPFs elegíveis...')
                     self._iniciar_lote()
@@ -912,8 +975,11 @@ class Aplicativo:
                     self.status.set(str(dado))
                 elif evento=='diagnostico_navegacao':
                     self.status.set('Pesquisa SISREG não concluída (' + str(dado)[:48] + '). Registro encaminhado para pendências.')
-                elif evento=='erro_login':self.status.set(str(dado))
+                elif evento=='erro_login':
+                    self.estatisticas.diagnosticar('LOGIN_SUBMETIDO','ERRO',categoria='SESSAO_NAO_AUTORIZADA')
+                    self.status.set(str(dado))
                 elif evento=='navegador_parou':
+                    self.estatisticas.diagnosticar('SESSAO_ENCERRADA','OK')
                     self.browser_ready=False
                     if self.processando:
                         self._salvar_checkpoint()
@@ -953,6 +1019,7 @@ class Aplicativo:
         etapas=self.estatisticas.etapas
         completa=all(e.concluida for e in etapas.values()) and not self.persistencia_falhou
         self.estatisticas.encerrar(segundos=segundos,situacao='CONCLUIDA' if completa else 'PARCIAL')
+        self.estatisticas.diagnosticar('FIM_EXECUCAO','OK' if completa else 'PENDENCIA',segundos=segundos)
         try:
             if self.historico and not self.historico.termino:
                 self.historico.encerrar('CONCLUIDA' if completa else 'INTERROMPIDA')

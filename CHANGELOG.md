@@ -57,3 +57,15 @@
 - Eventos de erro técnico do cadastro e hospital codificados e gravados sem conteúdo identificável.
 - 117 testes descobertos, sem falhas no ambiente gráfico de testes (4 opcionais ignorados).
 - Não houve mudança dos seletores da busca, da regra de correspondência nem da proteção da planilha original.
+
+## 0.7.1 — Solicitação rastreável, identidade visual e log de diagnóstico
+
+- Exibe código real da solicitação no campo Solicitação da tabela hospitalar, extraído exclusivamente da ficha com AIH exata.
+- Cria coluna `rpaNumeroSolicitacao` (P) no XLSX, sem alterar os sete campos originais.
+- Corrige confusão semântica: o primeiro `<b>` da ficha corresponde ao Código Solicitação, não ao autorizador; não utiliza esse seletor para completar `codigoAutorizador`.
+- Remove o botão de exportação avulsa das pendências, mantendo dados na planilha e estatísticas.
+- Redesenha a quarta aba com três painéis discretos (cobertura, tempo, arquivos).
+- Inclui log técnico cronológico com etapa de pesquisa, seleção da AIH, leitura da ficha, resultado, duração, ordinal e categoria estritamente enumerada, sem PII.
+- Incorpora cabeçalho SISREG PNG otimizado e ícone ICO ao EXE no workflow GitHub Actions.
+- Preserva importação, indexação PDF, pesquisa CPF→CNS, busca de AIH, pausa e gravacão transacional de planilha.
+- Acrescenta testes sintéticos da coluna P, campo autorizado e sanitização dos logs.

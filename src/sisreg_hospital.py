@@ -16,7 +16,9 @@ CAMPO_CNS = 'xpath=//*[@id="main_page"]/form/center[1]/table/tbody/tr[3]/td[2]/i
 BTN_PESQUISAR = 'input[name="enviar"][type="button"][onclick*="pesquisar"]'
 FICHA = '#fichaInternacao'
 CARATER = 'xpath=//*[@id="fichaInternacao"]/table/tbody/tr[44]/td[1]'
-AUTORIZADOR = 'xpath=//*[@id="fichaInternacao"]/table/tbody/tr[1]/td[1]/b'
+# A ficha identifica este valor como CÓDIGO DE SOLICITAÇÃO, não autorizador.
+CODIGO_SOLICITACAO = 'xpath=//*[@id="fichaInternacao"]/table/tbody/tr[1]/td[1]/b'
+# Sem seletor independente validado, não inferir o código autorizador.
 PROCEDIMENTO = 'xpath=//*[@id="fichaInternacao"]/table/tbody/tr[48]/td[2]'
 
 
@@ -27,6 +29,7 @@ class ResultadoHospital:
     carater: str = ''
     autorizador: str = ''
     procedimento: str = ''
+    solicitacao: str = ''
 
 
 def obter_carater(texto: str) -> str:
@@ -145,25 +148,49 @@ def obter_detalhes(pagina, aih: str, procedimento_hospital: str = '') -> Resulta
         return ResultadoHospital('AIH_NAO_COMPROVADA_FICHA', 'AIH não aparece identificável na ficha aberta.')
     try:
         _, campo_carater = _encontrar(pagina, CARATER, tempo=2500)
-        _, campo_autor = _encontrar(pagina, AUTORIZADOR, tempo=2500)
+        _, campo_solic = _encontrar(pagina, CODIGO_SOLICITACAO, tempo=2500)
         _, campo_proc = _encontrar(pagina, PROCEDIMENTO, tempo=2500)
         carater = obter_carater(campo_carater.inner_text(timeout=3000))
-        autorizador = obter_autorizador(campo_autor.inner_text(timeout=3000))
+        solicitacao = obter_autorizador(campo_solic.inner_text(timeout=3000))
         procedimento = obter_procedimento(campo_proc.inner_text(timeout=3000))
     except Exception:
         return ResultadoHospital('CAMPOS_FICHA_NAO_CONFIRMADOS', 'Seletores de caráter, autorizador ou procedimento mudaram.')
-    if not carater or not autorizador or not procedimento:
+    if not carater or not solicitacao or not procedimento:
         return ResultadoHospital('CAMPOS_FICHA_INCOMPLETOS', 'Os três dados não puderam ser extraídos com segurança.')
     esperado = digitos(procedimento_hospital)
     if esperado and (len(esperado) != 10 or esperado != procedimento):
         return ResultadoHospital('PROCEDIMENTO_DIVERGENTE',
                                 'Código solicitado na ficha difere do informado pelo hospital; exige revisão.',
-                                carater, autorizador, procedimento)
+                                carater, '', procedimento, solicitacao)
     return ResultadoHospital('FICHA_CONFERIDA', 'AIH exata localizada; procedimento compatível com o hospital.',
-                            carater, autorizador, procedimento)
+                            carater, '', procedimento, solicitacao)
 
 
-def consultar_solicitacao_hospitalar(pagina, cns: str, aih: str, procedimento: str = '') -> ResultadoHospital:
-    pesquisar_por_cns(pagina, cns)
-    selecionar_linha_aih(pagina, aih)
-    return obter_detalhes(pagina, aih, procedimento)
+def consultar_solicitacao_hospitalar(pagina, cns: str, aih: str,
+                                   procedimento: str = '', observador=None) -> ResultadoHospital:
+    """Consulta por etapas, com telemetria restrita a códigos SEM dados de pacientes."""
+    for acao, funcao in (
+        ('BUSCA_HOSPITALAR', lambda: pesquisar_por_cns(pagina, cns)),
+        ('AIH_EXATA', lambda: selecionar_linha_aih(pagina, aih)),
+        ('LEITURA_FICHA', lambda: obter_detalhes(pagina, aih, procedimento))):
+        inicio = time.perf_counter()
+        try:
+            resultado = funcao()
+        except Exception:
+            if observador:
+                observador(acao, 'ERRO', time.perf_counter()-inicio,
+                           'SELETOR_NAO_ENCONTRADO')
+            raise
+        if observador:
+            situacao = 'OK'
+            categoria = 'NENHUM'
+            if acao == 'LEITURA_FICHA' and resultado.situacao not in ('FICHA_CONFERIDA', 'PROCEDIMENTO_DIVERGENTE'):
+                situacao = 'PENDENCIA'
+                categoria = {
+                    'FICHA_NAO_ABERTA':'FICHA_NAO_ABERTA',
+                    'AIH_NAO_COMPROVADA_FICHA':'AIH_NAO_CONFIRMADA',
+                    'CAMPOS_FICHA_NAO_CONFIRMADOS':'SELETOR_NAO_ENCONTRADO',
+                    'CAMPOS_FICHA_INCOMPLETOS':'CAMPOS_FICHA_INCOMPLETOS',
+                }.get(resultado.situacao, 'ERRO_NAO_CLASSIFICADO')
+            observador(acao, situacao, time.perf_counter()-inicio, categoria)
+    return resultado
