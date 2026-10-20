@@ -11,7 +11,7 @@
 - Exportação opcional do relatório mínimo de pendências na terceira etapa.
 - Normalização da classificação automatizada `DADOS_COLETADOS_SEM_DIVERGENCIA`, sem atribuir atesto ou aprovação fiscal.
 - Centralizada `APP_VERSION=0.6.0` com data compilação gerada no build e metadados de versão Windows.
-- Novo módulo `governanca.py`, `app_info.py`, script de build, testes sintéticos e documentação.
+- Novo módulo `governanca.py`, `app_info.py`, script de build, **87 testes de regressão/segurança (3 ignorados)** e documentação.
 - Não há integração com serviços externos além das consultas institucionais existentes.
 
 ### Atenção

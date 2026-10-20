@@ -1,7 +1,8 @@
 # Verificação técnica — v0.6.0
 
 - Baseline v0.5 executado **antes das alterações**: 65 testes, 0 falhas e 3 skipped.
-- Após alterações: consultar resultado registrado pelo executor de testes; os testes de governança usam apenas dados fictícios.
+- Após alterações: **87 testes executados, 0 falhas, 3 ignorados**, incluindo 22 novos testes de governança e segurança. Os testes usam apenas dados sintéticos.
+- Três testes gráficos dependentes de ambiente foram ignorados pelo executor; também foi realizado um teste de abertura do Tkinter em display virtual.
 - **Não** houve login real no SISREG nesta execução nem compilação Windows em ambiente local Linux.
 - Lista de aceite: fonte intacta, PDF lido localmente, histórico sem CPF/CNS/nome/senha, eventos fechados, limpeza temporária seletiva, arquivos de trabalho separados, pendências mínimas, compilação com versão, ausência de chamadas externas novas, sem decisão de atesto.
 

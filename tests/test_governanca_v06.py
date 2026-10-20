@@ -199,3 +199,25 @@ class TesteVersao(unittest.TestCase):
 
 
 if __name__=='__main__': unittest.main()
+
+class TesteCredencialIncorretaETempo(unittest.TestCase):
+    """Simula falha na tela, nunca testa uma conta real SISREG."""
+
+    def test_login_nao_confirmado_mantem_bloqueio(self):
+        from unittest.mock import patch
+        from sisreg_navigation import autenticao_ativa, NavegacaoInesperada
+        class Pagina: url = 'https://sisregiii.saude.gov.br/'
+        with patch('sisreg_navigation._encontrar', side_effect=NavegacaoInesperada('menu ausente')):
+            self.assertFalse(autenticao_ativa(Pagina(),timeout=10))
+
+    def test_timeout_no_formulario_nao_preenche_senha(self):
+        from playwright.sync_api import TimeoutError as PlaywrightTimeout
+        from sisreg_login import FormularioInesperado, submeter_login
+        class Campo:
+            def wait_for(self, **kwargs):raise PlaywrightTimeout('campo ausente')
+            def fill(self, value, **kwargs):raise AssertionError('NÃO DEVE PREENCHER')
+        class Pagina:
+            url='https://sisregiii.saude.gov.br/'
+            def locator(self, _):return Campo()
+        with self.assertRaises(FormularioInesperado):
+            submeter_login(Pagina(), 'operador-ficticio', 'senha-ficticia')
