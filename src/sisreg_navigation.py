@@ -135,10 +135,116 @@ def avaliar_resultado_cadastro(texto, nome_esperado, cpf_esperado):
     return next(iter(cns_achados)), 'CNS_CONFIRMADO_TELA'
 
 
+# Elemento confirmado visualmente na página cadastral do SISREG (20/10/2026).
+# Restringir CNS ao campo identificado, não a qualquer número em negrito.
+CNS_CADASTRO_RESULTADO = 'xpath=//*[@id="main_div"]/form/center[1]/table/tbody/tr[3]/td'
+
+
+def avaliar_ficha_cadastro_estruturada(dados, nome_esperado, cpf_esperado):
+    """Somente relaciona CNS ao CPF quando a ficha contém identidade inequívoca.
+
+    Os dados são mantidos em memória; não são registrados em logs.
+    """
+    if not isinstance(dados, dict) or not dados.get('fichaEncontrada'):
+        return None, 'FICHA_CADASTRO_NAO_IDENTIFICADA'
+    n=digitos(str(dados.get('cns', '')))
+    if not cns_formato(n):
+        return None, 'CNS_NAO_IDENTIFICADO_DOM'
+    nome=normalizar_nome(str(dados.get('nome', '')))
+    esperado=normalizar_nome(nome_esperado)
+    if not nome or nome!=esperado:
+        return None, 'NOME_NAO_CONFIRMADO_RESULTADO' if not nome else 'NOME_DIVERGENTE_RESULTADO'
+    cpf_tela=digitos(str(dados.get('cpf', '')))
+    cpf=digitos(cpf_esperado)
+    if cpf_tela and cpf_tela!=cpf:
+        return None, 'CPF_DIVERGENTE_CADASTRO'
+    # Na ficha atual o CPF aparece em DOCUMENTOS. Se a estrutura mudar,
+    # suspender a associação automática ao invés de confiar só no nome.
+    if not cpf_tela:
+        return None, 'CPF_NAO_CONFIRMADO_RESULTADO'
+    return n, 'CNS_CONFIRMADO_FICHA_IDENTIDADE'
+
+
+def ler_ficha_cadastro_estruturada(pagina):
+    """Obtém exclusivamente CNS/nome/CPF da ficha cadastral do #main_div.
+
+    Suporta telas legadas nas quais rótulos e valores são apresentados em
+    linhas consecutivas, inclusive colunas paralelas (nome/nome social).
+    """
+    return pagina.evaluate(r"""() => {
+      const resultado = { fichaEncontrada:false, cns:'', nome:'', cpf:'' };
+      const main = document.querySelector('#main_div');
+      if (!main) return resultado;
+      const xpath = '//*[@id="main_div"]/form/center[1]/table/tbody/tr[3]/td';
+      const celula = document.evaluate(xpath,document,null,XPathResult.FIRST_ORDERED_NODE_TYPE,null).singleNodeValue;
+      if (!celula || !celula.getClientRects().length) return resultado;
+      const numero=(celula.textContent || '').replace(/\s+/g,'').trim();
+      if (!/^\d{15}$/.test(numero)) return resultado;
+      // A célula exibida fica em uma tabela identificada como CNS.
+      const tabela = celula.closest('table');
+      const conteudoTabela=(tabela?.innerText || '').toUpperCase();
+      if (!/\bCNS\s*:/.test(conteudoTabela)) return resultado;
+      resultado.fichaEncontrada=true;
+      resultado.cns=numero;
+      const raiz = main.querySelector('form') || main;
+      const limpar=x=>(x||'').replace(/\s+/g,' ').trim();
+      // No SISREG, a linha de rótulos costuma anteceder a linha de valores.
+      const linhas = [...raiz.querySelectorAll('tr')];
+      function lerCampo(rotulo) {
+        for (const linha of linhas) {
+          const celulas=[...linha.querySelectorAll(':scope > td, :scope > th')];
+          for (let i=0;i<celulas.length;i++) {
+            const c=celulas[i];
+            const interno=limpar(c.innerText);
+            if (!new RegExp('^'+rotulo+'\\s*:$','i').test(interno)) continue;
+            const irmao=celulas[i+1];
+            // Rótulo e valor podem estar na mesma linha.
+            if (irmao && limpar(irmao.innerText) && !/^[^:]{1,45}:$/.test(limpar(irmao.innerText)))
+              return limpar(irmao.innerText);
+            // Ou podem estar alinhados verticalmente na mesma coluna.
+            let seguinte=linha.nextElementSibling;
+            for (let tentativa=0;seguinte && tentativa<2;tentativa++,seguinte=seguinte.nextElementSibling) {
+              const proxima=[...seguinte.querySelectorAll(':scope > td, :scope > th')];
+              const valor=limpar(proxima[i]?.innerText || proxima[0]?.innerText);
+              if (valor && !/^[^:]{1,45}:$/.test(valor))return valor;
+            }
+          }
+        }
+        // Fallback para tabelas sem TR/TD pareados, somente com rótulo único.
+        const texto=(raiz.innerText || '').replace(/\r/g,'');
+        const re = new RegExp('(?:^|\\n)\\s*'+rotulo+'\\s*:\\s*(?:\\n\\s*)?([^\\n]+)','i');
+        const achou = texto.match(re);
+        return limpar(achou?.[1] || '');
+      }
+      resultado.nome = lerCampo('Nome');
+      resultado.cpf = lerCampo('CPF');
+      return resultado;
+    }""")
+
+
+def consultar_ficha_cadastro_estruturada(pagina, nome, cpf):
+    """Busca ficha em frames oficiais, sem leitura de dados para log/arquivo."""
+    ultimo = 'FICHA_CADASTRO_NAO_IDENTIFICADA'
+    for frame in getattr(pagina,'frames',[pagina]):
+        try:
+            if getattr(frame,'url','') not in ('','about:blank'):
+                origem_autorizada(frame)
+            dados=ler_ficha_cadastro_estruturada(frame)
+            if dados.get('fichaEncontrada'):
+                return avaliar_ficha_cadastro_estruturada(dados,nome,cpf)
+        except Exception:
+            continue
+    return None, ultimo
+
+
 def ler_resultado_cadastro(pagina, nome_esperado, cpf_esperado, espera=10000):
     """Inspeciona texto visível após a busca (nunca marca cadastro como inexistente)."""
-    # O SISREG exibe o CNS como TD > FONT > B, sem necessariamente ter
-    # "CNS:" como texto ou manter o CPF no formulário após pesquisar.
+    # Prioridade: ficha cadastral específica do SISREG. Não coletar números
+    # genéricos em negrito nem confundir rótulos em células paralelas.
+    numero, motivo = consultar_ficha_cadastro_estruturada(pagina,nome_esperado,cpf_esperado)
+    if numero or motivo != 'FICHA_CADASTRO_NAO_IDENTIFICADA':
+        return numero, motivo
+    # Compatibilidade com outras telas autorizadas e estruturas anteriores.
     numero, motivo = ler_cns_negrito_pagina(
         pagina, nome_esperado, cpf_esperado, espera=min(4500,espera),
         consulta_efetuada=True)

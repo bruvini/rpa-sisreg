@@ -104,11 +104,24 @@ class TestesRegressao(unittest.TestCase):
         self.assertIsNone(numero)
         self.assertEqual(motivo,'CNS_DESTACADO_AMBIGUO_OU_AUSENTE')
 
-    def test_versao_central(self):self.assertEqual(APP_VERSION,'0.6.1')
+    def test_versao_central(self):self.assertEqual(APP_VERSION,'0.6.2')
 
 
 @unittest.skipUnless(os.environ.get('SISREG_GUI_TEST')=='1','Exige display gráfico')
 class TestesVisuais(unittest.TestCase):
+    def test_rodape_visivel_e_botao_nao_comprimido(self):
+        import tkinter as tk
+        from sisreg_login import Aplicativo
+        root=tk.Tk()
+        try:
+            app=Aplicativo(root)
+            root.update()
+            self.assertGreaterEqual(app.btn_proxima.winfo_width(), 90)
+            self.assertLessEqual(app.btn_proxima.winfo_rooty()+app.btn_proxima.winfo_height(),
+                                 root.winfo_screenheight())
+            self.assertGreaterEqual(app.btn_encerrar.winfo_width(), 85)
+        finally:root.destroy()
+
     def test_tabelas_colunas_e_avanco(self):
         import tkinter as tk
         from sisreg_login import Aplicativo

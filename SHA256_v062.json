@@ -1,0 +1,17 @@
+{
+  "version": "0.6.2",
+  "files": {
+    "src/sisreg_navigation.py": "44491c22674220c26beccbff9fabafd971f199aab779338b8336ccc26a0494b9",
+    "src/sisreg_login.py": "25a06342641c4935cfb15c93d170ac7bb77039c7707caf9c76a0577ed8678460",
+    "src/apresentacao.py": "077170cabad0591b6d428755678070df33e00a5aeeb63d6276c305a69c343d22",
+    "src/app_info.py": "7d55f1c7758d43eb666944651b5a4b0e888a5a099b7725150985fedc58644ff9",
+    "tests/test_cns_ficha_v062.py": "904e68b98b9e635201d80be467a80421ab82b5b8687e7fae0634cfc86d53f601",
+    "tests/test_hospital_v04.py": "71d7b5f26fee59f95a6dc5ad0349296915e0d18b4d32e3b2b64278c83dbf80c5",
+    "tests/test_interface_cns_v05.py": "55cc24fffa0f66b68dd56a62c5e5f73fa3ac93634ba422214ebba57554b9a358",
+    "tests/test_governanca_v06.py": "d81acb82f001059d56eceb1d11261060eaf21600e01babe46c8c48d15da80b48",
+    "tests/test_usabilidade_v061.py": "4374dc34ab45338bd0561392865f779316d4e8aac1806d60f7cfd086cf6c0405",
+    "README.md": "517d7954877ea362d3d2c6a613fc4798a615fafc234441b54c25405c8da0db39",
+    "CHANGELOG.md": "0e04cbdf999a943e57597847bd995eab7acb1cf6480c3a3899d6e7bffe0f65f0",
+    "RELATORIO_TESTES.md": "f22fd38273e2b5c5099584279a2f0a96efac92075a5f6dd7fa15b2983348aeb2"
+  }
+}

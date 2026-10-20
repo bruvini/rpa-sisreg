@@ -1,12 +1,10 @@
-# Relatório de testes — RPA SISREG v0.6.1
+# RPA SISREG v0.6.2 — Relatório de testes
 
-Data: 20/10/2026. Execução sintética e local, sem autenticação nem requisições ao SISREG real.
+A implementação é um protótipo sujeito à homologação na estação institucional; os testes são offline e não autenticam no SISREG.
 
-- Descobertos: **96 testes**; testes-padrão: **OK**, 4 ignorados por depender de display/teste DOM; execução com display virtual: **OK**, 1 ignorado (Chromium offline não habilitado nesta passagem).
-- Chromium offline: teste anterior de HTML do CNS destacado (`td > font > b`) aprovado.
-- Regressões v0.2 a v0.6: continuidade dos controles de CPF/CNS, cópia de trabalho e trilha administrativa.
-- Novas verificações: callback progressivo do PDF, situação legível, coluna CNS exclusiva da etapa 2, botão Próxima etapa, nome dinâmico com colisão, vínculo ao resultado em popup oficial, proibição de página externa e bloqueio de CNS divergentes.
-- Janela 1080×750: tabela CNS com 209 pixels de altura no display virtual; avaliada a navegação entre etapas.
-- **Não homologado:** extração efetiva do CNS na página autenticada SISREG; um nome em DOM diferente ou um resultado ambíguo seguirá como pendência. Também não foi executada a compilação Windows nesta sessão.
-
-A aplicação não toma decisão fiscal nem substitui o julgamento do servidor. Não inserir dados de pacientes reais nos testes, issues ou GitHub Actions.
+- **108 testes automatizados:** aprovados, incluindo testes gráficos com display virtual e HTML fictício no Chromium.
+- CNS localizado na célula específica do cadastro, com nome e CPF alinhados em linhas diferentes: aprovado em cenário sintético.
+- Nome diferente, CPF diferente, CPF ausente e CNS malformado: nenhum é vinculado automaticamente.
+- Etapas, planilha original, backups, histórico de execução e convenções de nome: sem regressões nos testes existentes.
+- Pendente: confirmar os seletores com a página real do SISREG, política de execução Windows, compilação .exe e a identificação dos CNS autorizados na estação da SMS.
+- Nenhuma planilha, documento ou sessão de paciente real foi incluída em tests/fixtures, CI ou pacote.

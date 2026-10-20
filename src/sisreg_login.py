@@ -9,6 +9,7 @@ USO CONDICIONADO À AUTORIZAÇÃO DA REGULAÇÃO/TI.
 from __future__ import annotations
 
 import queue
+import sys
 import time
 import os
 from pathlib import Path
@@ -120,8 +121,15 @@ class Aplicativo:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         root.title(f'RPA SISREG · Conferência em lote — v{APP_VERSION}')
-        root.geometry('1080x750')
-        root.minsize(900,640)
+        # Caber na área útil mesmo com escalonamento/monitor institucional.
+        largura=min(1160,max(820,root.winfo_screenwidth()-70))
+        altura=min(850,max(590,root.winfo_screenheight()-125))
+        root.geometry(f'{largura}x{altura}+18+18')
+        root.minsize(min(850,largura),min(580,altura))
+        if sys.platform=='win32':
+            # Windows conhece a área de trabalho sem invadir a barra de tarefas.
+            try: root.state('zoomed')
+            except tk.TclError: pass
         root.configure(bg=FUNDO)
         root.protocol('WM_DELETE_WINDOW', self.encerrar)
         self.eventos=queue.Queue()
@@ -148,6 +156,8 @@ class Aplicativo:
         self.atividade_preparo=tk.StringVar(value='Aguardando início.')
         self.resultado_titulo=tk.StringVar(value='')
         self.resultado_descritivo=tk.StringVar(value='')
+        self.resultado_tempo=tk.StringVar(value='')
+        self.resultado_arquivo=tk.StringVar(value='')
         self.cronometro=tk.StringVar(value='Tempo: 00:00')
         self.inicio_preparo=None
         self.tipo_lote='cadastro'
@@ -211,7 +221,11 @@ class Aplicativo:
         tk.Label(self.cartao_resultado,textvariable=self.resultado_titulo,bg='#e9f5ed',fg='#175d39',
                  font=('Segoe UI',11,'bold')).pack(anchor='w',padx=12,pady=(9,2))
         tk.Label(self.cartao_resultado,textvariable=self.resultado_descritivo,bg='#e9f5ed',fg='#204937',
-                 font=('Segoe UI',10),wraplength=955,justify='left').pack(anchor='w',padx=12,pady=(0,10))
+                 font=('Segoe UI',10),wraplength=955,justify='left').pack(anchor='w',padx=12,pady=(0,2))
+        tk.Label(self.cartao_resultado,textvariable=self.resultado_tempo,bg='#e9f5ed',fg='#204937',
+                 font=('Segoe UI',10),wraplength=955,justify='left').pack(anchor='w',padx=12,pady=(0,2))
+        tk.Label(self.cartao_resultado,textvariable=self.resultado_arquivo,bg='#e9f5ed',fg='#204937',
+                 font=('Segoe UI',10),wraplength=955,justify='left').pack(anchor='w',padx=12,pady=(0,9))
         grade=ttk.Frame(a);grade.pack(fill='both',expand=True)
         self.grade=grade
         cfg=[('aba','Aba',130),('linha','Linha',52),('aih','AIH',122),('paciente','Paciente',240),
@@ -297,8 +311,8 @@ class Aplicativo:
         ttk.Label(c,text='Conferência automatizada ≠ análise fiscal concluída. O tempo medido é real. A estimativa manual usa 15 segundos por AIH como premissa fixa '
                   'e não comprova economia de trabalho. Não são alteradas '
                   'solicitações no SISREG. Feche o Excel durante os lotes.',wraplength=920).pack(anchor='w',pady=(14,0))
-        rodape=ttk.Frame(corpo);rodape.pack(fill='x',pady=(10,0))
-        ttk.Label(rodape,text=f'v{APP_VERSION}  ·  A automação identifica dados; o atesto é decisão do fiscal.',
+        rodape=ttk.Frame(corpo);rodape.pack(side='bottom',fill='x',pady=(10,0))
+        ttk.Label(rodape,text=f'v{APP_VERSION} · Atesto é decisão do fiscal.',
                   foreground='#4c6375').pack(side='left',padx=(0,10))
         ttk.Label(rodape,textvariable=self.status,wraplength=700).pack(side='left',fill='x',expand=True)
         self.btn_encerrar=ttk.Button(rodape,text='Encerrar',command=self.encerrar)
@@ -306,6 +320,20 @@ class Aplicativo:
         self.btn_proxima=ttk.Button(rodape,text='Próxima etapa  →',
                                     command=self._proxima_etapa, state='disabled')
         self.btn_proxima.pack(side='right',padx=(0,10))
+        # Reservar espaço ao rodapé ANTES do notebook expansível; do contrário,
+        # em telas menores a tabela consome o espaço dos botões.
+        self.abas.pack_forget()
+        self.abas.pack(fill='both',expand=True)
+        # Ações têm prioridade na reserva de largura: mensagens longas não
+        # devem comprimir 'Próxima etapa' até exibir somente uma letra.
+        elementos_rodape=rodape.winfo_children()
+        for elemento in elementos_rodape:
+            elemento.pack_forget()
+        self.btn_encerrar.pack(side='right')
+        self.btn_proxima.pack(side='right',padx=(0,10))
+        for elemento in elementos_rodape:
+            if elemento not in (self.btn_proxima,self.btn_encerrar):
+                elemento.pack(side='left',fill='x',expand=True)
         self.abas.bind('<<NotebookTabChanged>>',self._atualizar_avanco)
 
     def _atualizar_avanco(self, _evento=None):
@@ -639,11 +667,15 @@ class Aplicativo:
                     manual=len(sessao.registros)*MANUAL_SEGUNDOS_POR_AIH
                     self.resultado_titulo.set(f'✓ Extração automática concluída — {len(sessao.registros)} AIHs em {self._duracao(segundos)}')
                     cpf_presentes=sum(bool(r.cpf) for r in sessao.registros)
+                    total=len(sessao.registros)
+                    cobertura=(100*cpf_presentes/total) if total else 0
                     self.resultado_descritivo.set(
-                        f'{cpf_presentes} CPFs disponíveis ({atualizacao["cpf"]} acrescentados agora) · {informacao}  |  '
-                        f'Manual estimado: {self._duracao(manual)} (15 s/AIH, hipótese fixa). '
-                        f'Diferença estimada: {self._duracao(max(0,manual-segundos))}. '
-                        f'Cópia de trabalho: {sessao.origem.name}. Arquivo recebido preservado.')
+                        f'CPFs localizados: {cpf_presentes} de {total} registros ({cobertura:.1f}% de cobertura) · {informacao}')
+                    self.resultado_tempo.set(
+                        f'Manual estimado: {self._duracao(manual)} (15 s/AIH, hipótese fixa) · '
+                        f'Diferença estimada: {self._duracao(max(0,manual-segundos))}.')
+                    self.resultado_arquivo.set(
+                        f'✓ Nova planilha criada: {sessao.origem.name} · Arquivo hospitalar original preservado.')
                     self.cartao_resultado.pack(fill='x',pady=(0,8),before=self.grade)
                     self.atividade_preparo.set('Concluído. Cópia de trabalho atualizada.')
                     self.preparo_concluido=True
@@ -721,7 +753,8 @@ class Aplicativo:
                     pendencias=sorted(((n,m) for m,n in self.motivos_cadastro.items()
                                        if not m.startswith('CNS_CONFIRMADO')),reverse=True)
                     self.diagnostico_cns.set('Pendências por motivo: '+
-                        ('; '.join(f'{m}: {n}' for n,m in pendencias[:3]) if pendencias else 'nenhuma até agora'))
+                        ('; '.join(f'{rotulo_situacao(m)}: {n}' for n,m in pendencias[:3])
+                         if pendencias else 'nenhuma até agora'))
                 elif evento=='lote_fim':
                     processados,previstos=dado
                     self._salvar_checkpoint()

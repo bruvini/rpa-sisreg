@@ -1,8 +1,14 @@
-# RPA SISREG · Conferência de internações (v0.6.1)
+# RPA SISREG · Conferência de internações (v0.6.2)
 
 **Estado:** protótipo institucional em homologação. A publicação de código não significa autorização da Regulação ou da TI para automação em produção. Não é um sistema de atesto ou decisão fiscal.
 
 > **Princípio:** a máquina executa o trabalho repetitivo; o fiscal analisa as exceções e toma a decisão.
+
+### Ajustes de interface e ficha cadastral v0.6.2
+
+A tela de conclusão divide o resumo em três linhas (cobertura dos CPFs entre os registros do hospital, tempo estimado e identificação da **nova planilha**), sem dizer “0 acrescentados”. Para 750 CPFs em 784 registros, a cobertura é 95,7%; as 984 AIHs indexadas no PDF são um indicador distinto. O histórico de tempos mantém a hipótese manual de 15 segundos por AIH, não uma economia empiricamente comprovada. O painel de pendências usa rótulos em português. A janela adapta o tamanho ao monitor e, no Windows, abre maximizada para mostrar o rodapé.
+
+A pesquisa cadastral tenta primeiro o XPath específico da ficha SISREG `//*[@id="main_div"]/form/center[1]/table/tbody/tr[3]/td`. A leitura da ficha suporta rótulos Nome:/CPF: acima dos valores, inclusive colunas paralelas. **Só grava o CNS se a ficha apresentar CNS único, nome exato e CPF correspondente à pesquisa.** Se qualquer um faltar ou divergir, registra pendência e não preenche o Excel. A estrutura da página real ainda precisa ser homologada na sessão institucional; os testes de navegação não usam contas nem dados reais.
 
 ### Ajustes operacionais v0.6.1
 
@@ -72,7 +78,7 @@ Na etapa 3, existe **Exportar somente pendências (XLSX)** opcional. Contém ape
 
 ## Compilação Windows
 
-O arquivo `.github/workflows/compilar-windows.yml` constrói no GitHub Actions com dependências fixadas em `requirements-build.txt`, sem dados reais. O workflow executa testes, gera `src/build_info.py` com data UTC da compilação e `versao_windows.txt` com recurso de versão Windows, depois compila `dist/SISREG_Login.exe` via PyInstaller. O EXE mostra `0.6.1` na interface e metadados de versão nas propriedades do arquivo.
+O arquivo `.github/workflows/compilar-windows.yml` constrói no GitHub Actions com dependências fixadas em `requirements-build.txt`, sem dados reais. O workflow executa testes, gera `src/build_info.py` com data UTC da compilação e `versao_windows.txt` com recurso de versão Windows, depois compila `dist/SISREG_Login.exe` via PyInstaller. O EXE mostra `0.6.2` na interface e metadados de versão nas propriedades do arquivo.
 
 Para compilar em Windows *autorizado* com Python de desenvolvimento, use `powershell -File .\compilar_windows.ps1`. A estação da Joice não precisa de Python. O workflow produz o artefato **SISREG_Login_Windows** com `SISREG_Login.exe` e SHA-256 para comparação.
 

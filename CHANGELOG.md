@@ -1,3 +1,12 @@
+# v0.6.2 — CNS da ficha identificada e apresentação
+
+- Consulta do CNS direcionada ao XPath cadastral `#main_div`, em vez de buscar qualquer número destacado.
+- Validação estruturada de nome e CPF mesmo quando rótulos/valores estão em linhas separadas; falha fechada se documento ou identidade não confirmar.
+- Resumo da etapa 1 organizado em três linhas, com percentual sobre registros hospitalares e cópia criada em destaque.
+- Pendências humanizadas também no diagnóstico agregado.
+- Janela dimensionada conforme tela e maximizada no Windows quando permitido.
+- Testes sintéticos de DOM e segurança, sem acessar SISREG nem publicar dados de pacientes.
+
 # Histórico de versões — RPA SISREG
 
 ## v0.6.1 — Usabilidade e identificação cadastral (20/10/2026)

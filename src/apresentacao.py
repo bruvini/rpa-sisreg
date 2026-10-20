@@ -29,6 +29,8 @@ MOTIVOS = {
     'CNS_NAO_IDENTIFICADO_DOM': 'Tela não apresentou CNS reconhecível',
     'CNS_NAO_UNICO_OU_NAO_IDENTIFICADO': 'CNS ausente ou múltiplo no resultado',
     'CPF_DIVERGENTE_CADASTRO': 'CPF diferente no cadastro',
+    'CPF_NAO_CONFIRMADO_RESULTADO': 'CPF não identificado na ficha cadastral',
+    'FICHA_CADASTRO_NAO_IDENTIFICADA': 'Ficha cadastral não encontrada',
     'CPF_PESQUISADO_NAO_CONFIRMADO': 'CPF pesquisado não confirmado',
     'FALHA_DE_NAVEGACAO_OU_TEMPO': 'Erro ou demora na consulta ao SISREG',
 }

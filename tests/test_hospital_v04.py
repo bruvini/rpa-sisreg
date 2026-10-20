@@ -30,21 +30,21 @@ class TesteDadosHospitalares(unittest.TestCase):
     def test_procedimento_multiplos_codigos(self):
         self.assertEqual(obter_procedimento('0409060178 e 0409040193'), '')
     def test_cns_resultado_destacado_somente_com_identidade(self):
-        n,m=avaliar_cadastro_com_cns_em_negrito('Paciente: ANA MARIA EXEMPLO', ['703600038091732'],
+        n,m=avaliar_cadastro_com_cns_em_negrito('Paciente: ANA MARIA EXEMPLO', ['900000000000001'],
                                                  'ANA MARIA EXEMPLO', '11144477735', '11144477735')
-        self.assertEqual(n,'703600038091732')
+        self.assertEqual(n,'900000000000001')
         self.assertEqual(m,'CNS_CONFIRMADO_TD_NEGRITO')
     def test_cns_falso_quando_nome_nao_corresponde(self):
-        n,_=avaliar_cadastro_com_cns_em_negrito('Paciente: OUTRA PESSOA', ['703600038091732'],
+        n,_=avaliar_cadastro_com_cns_em_negrito('Paciente: OUTRA PESSOA', ['900000000000001'],
                                                  'ANA MARIA EXEMPLO', '11144477735', '11144477735')
         self.assertIsNone(n)
     def test_cns_nao_aceita_cpf_outra_pessoa(self):
-        n,_=avaliar_cadastro_com_cns_em_negrito('Paciente: ANA MARIA EXEMPLO', ['703600038091732'],
+        n,_=avaliar_cadastro_com_cns_em_negrito('Paciente: ANA MARIA EXEMPLO', ['900000000000001'],
                                                  'ANA MARIA EXEMPLO', '11144477735', '12345678901')
         self.assertIsNone(n)
     def test_cns_ambiguo(self):
         n,_=avaliar_cadastro_com_cns_em_negrito('Paciente: ANA MARIA EXEMPLO',
-              ['703600038091732','700000000000001'], 'ANA MARIA EXEMPLO', '11144477735', '11144477735')
+              ['900000000000001','700000000000001'], 'ANA MARIA EXEMPLO', '11144477735', '11144477735')
         self.assertIsNone(n)
 
 class TesteGravacaoNaOrigem(unittest.TestCase):
