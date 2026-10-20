@@ -12,7 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from openpyxl import load_workbook
 
-from saida_xlsx import CAMPOS_FINAIS as COLUNAS_AUDITORIA, adequar_colunas, escrever_linha
+from saida_xlsx import CAMPOS_FINAIS as COLUNAS_AUDITORIA, adequar_colunas, escrever_linha, LayoutPlanilhaIncompativel
 
 class AlteracaoExterna(Exception):
     pass
@@ -46,10 +46,9 @@ def gravar_na_origem(sessao, *, motivo='preparacao', backup=True) -> dict:
     try:
         for aba in ('POA CIRURGICO','PT6','ALTA COMPLEXIDADE'):
             ws = wb[aba]
-            try:
-                adequar_colunas(ws)
-            except ValueError as exc:
-                raise AlteracaoExterna(str(exc)) from None
+            # Erro de esquema não é modificação concorrente. A diferença
+            # importa para o diagnóstico técnico, sem expor dados de paciente.
+            adequar_colunas(ws)
         for r in sessao.registros:
             ws = wb[r.aba]
             cpf = ws.cell(r.linha,4)

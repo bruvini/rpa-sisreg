@@ -62,6 +62,7 @@ class SessaoPlanilha:
         self.diagnosticos: list[str] = []
         self.hash_planilha = ''
         self.hash_pdf = ''
+        self.hash_fonte_original = ''
 
     def carregar(self, caminho: str | Path) -> int:
         from openpyxl import load_workbook  # execução apenas local
@@ -107,7 +108,45 @@ class SessaoPlanilha:
         self.fonte_original = None
         self.hash_planilha = hashlib.sha256(p.read_bytes()).hexdigest()
         self.hash_pdf = ''
+        self.hash_fonte_original = ''
         return len(self.registros)
+
+    def validar_layout_para_saida(self) -> None:
+        """Pré-validação antes de indexar o PDF ou criar a cópia de trabalho.
+
+        A compatibilidade com layouts antigos não fica dependente de uma
+        exceção tardia depois de 15–20 segundos de indexação.
+        """
+        if not self.origem:
+            raise ValueError('Nenhuma planilha carregada.')
+        from openpyxl import load_workbook
+        from saida_xlsx import identificar_layout
+        wb=load_workbook(self.origem, read_only=False, data_only=False, keep_links=False)
+        try:
+            for aba in ABAS:
+                identificar_layout(wb[aba])
+        finally:
+            wb.close()
+
+    def descartar_copia_nao_gravada(self) -> bool:
+        """Descarta apenas uma cópia criada nesta sessão ainda idêntica à fonte.
+
+        Nunca elimina um arquivo que já recebeu dados e nunca toca a fonte.
+        """
+        if not self.fonte_original or not self.origem:
+            return False
+        p=Path(self.origem)
+        if (p.parent != self.fonte_original.parent or
+                not p.name.startswith('Planilha_RPA_') or p.suffix.lower() != '.xlsx'):
+            return False
+        from persistencia import sha256
+        if not p.is_file() or not self.hash_fonte_original or sha256(p) != self.hash_fonte_original:
+            return False
+        p.unlink()
+        self.origem=self.fonte_original
+        self.fonte_original=None
+        self.hash_fonte_original=''
+        return True
 
     def preparar_copia_de_trabalho(self) -> Path:
         """Não modifica a fonte selecionada; a cópia é automática, sem nova etapa."""
@@ -139,6 +178,7 @@ class SessaoPlanilha:
             destino.unlink(missing_ok=True)
             raise ValueError('Cópia de trabalho inválida; planilha de entrada preservada.')
         self.fonte_original = entrada
+        self.hash_fonte_original = self.hash_planilha
         self.origem = destino
         return destino
 

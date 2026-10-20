@@ -1,8 +1,8 @@
-# RPA SISREG · Conferência de internações (v0.7.2)
+# RPA SISREG · Conferência de internações (v0.7.3)
 
 **Homologação institucional:** a automação coleta dados e evidencia pendências; a decisão sobre atesto pertence ao fiscal. As pesquisas no SISREG continuam iguais às da v0.7.1.
 
-### Atualização v0.7.2 — planilha de entrega e ícone
+### Atualização v0.7.3 — planilha de entrega e ícone
 
 - O XLSX conserva as sete colunas do modelo hospitalar e exporta somente **H:K**: `rpaSituacao`, `rpaAtualizadoEm`, `rpaProcedimentoSISREG` e `rpaNumeroSolicitacao`. Campos técnicos adicionais não são exportados; logs técnicos permanecem separados e sem dados pessoais.
 - **H** mostra a situação final legível, distinguindo ausência no espelho, divergência no PDF, ausência/divergência cadastral, AIH não identificada, divergência hospitalar e **Consulta sem divergências**. Casos com erro ou consulta inacabada são apresentados como revisão pendente, nunca como ausência confirmada.
@@ -125,3 +125,8 @@ O relatório `.txt` agora possui seção **DIAGNÓSTICO DE AUTOMAÇÃO**: timest
 O GitHub Actions incorpora `assets/logo_sisreg_header.png` e `assets/Logo-SISREG.ico` no EXE via `--add-data` e `--icon`. A origem do PNG/ICO é material fornecido pelo responsável pelo projeto; não incluir fotos de pacientes ou documentos nos artefatos.
 
 Não utilizar dados reais de pacientes em testes, issues, commits, GitHub Actions ou exemplos de documentação. A homologação da leitura de campos do SISREG permanece restrita à estação institucional autorizada. Consulte [GUIA_v071.md](GUIA_v071.md) para verificações e retorno à v0.7.0.
+
+
+### Correção v0.7.3 — planilhas históricas e diagnóstico de falha
+
+O RPA reconhece cabeçalhos conhecidos de 4, 8 ou 9 colunas RPA sem alterar colunas próprias do hospital. O esquema é conferido antes de indexar o PDF. Uma cópia de trabalho ainda idêntica à fonte é retirada se o salvamento falhar; cópias efetivamente gravadas jamais são descartadas por essa rotina. Se a preparação falhar, gera `RELATORIO_TECNICO_RPA_FALHA_*.txt` na pasta da planilha de entrada quando houver permissão. O relatório usa somente categorias permitidas, sem identificar pacientes. Veja `GUIA_CORRECAO_v073.md` para testes e recuperação.

@@ -527,6 +527,8 @@ class Aplicativo:
                 t0=time.perf_counter()
                 sessao=SessaoPlanilha()
                 sessao.carregar(self.arquivo_planilha)
+                # Detectar layout legado antes da indexação cara do PDF.
+                sessao.validar_layout_para_saida()
                 tempos['planilha']=time.perf_counter()-t0
                 self.eventos.put(('preparo_fase', ('Planilha lida. Abrindo e indexando o PDF completo (etapa mais demorada)...',)))
                 # Uma tabela provisória aparece imediatamente; nenhum widget Tk
@@ -558,7 +560,15 @@ class Aplicativo:
                 self.eventos.put(('historico_preparacao', len(sessao.registros)))
                 self.eventos.put(('preparado',(sessao,informacao,gravacao,time.perf_counter()-self.inicio_preparo,tempos)))
             except Exception as e:
-                self.eventos.put(('erro_preparo',type(e).__name__))
+                # Não registrar str(e), paths ou valores do XLSX/PDF.
+                etapa='salvamento' if 'trabalho' in locals() else 'preparacao'
+                descartada = False
+                if 'sessao' in locals():
+                    try: descartada=sessao.descartar_copia_nao_gravada()
+                    except OSError: pass
+                self.eventos.put(('erro_preparo',
+                    (type(e).__name__,etapa,time.perf_counter()-self.inicio_preparo,
+                     len(sessao.registros) if 'sessao' in locals() else 0,descartada)))
         threading.Thread(target=tarefa,daemon=True).start()
 
     def _atualizar_relogio(self):
@@ -851,13 +861,30 @@ class Aplicativo:
                     self.carregando=False;self.btn_preparar.configure(state='normal')
                     self._atualizar_avanco()
                 elif evento=='erro_preparo':
+                    tipo,etapa,segundos,total,descartada = dado
                     self.carregando=False;self.btn_preparar.configure(state='normal')
-                    self.atividade_preparo.set('Falha na preparação; verifique o erro e tente novamente.')
-                    self.status.set('Preparação não concluída (' + str(dado) + '). Verifique o modelo e o PDF; nenhum dado foi enviado externamente.')
+                    self.preparo_concluido=False
+                    categoria=categoria_excecao(tipo)
+                    if categoria == 'ERRO_NAO_CLASSIFICADO':
+                        categoria='PREPARACAO_NAO_CONCLUIDA'
+                    try:
+                        self.estatisticas.concluir('preparo',segundos,consultados=total,
+                            encontrados=0,pendencias=total,falhas=1,completa=False)
+                        self.estatisticas.diagnosticar('SALVAMENTO_XLSX' if etapa=='salvamento' else 'PDF_INDEXACAO',
+                            'ERRO',segundos=segundos,categoria=categoria)
+                    except (ValueError,OSError):pass
+                    self.atividade_preparo.set('Não foi possível concluir a preparação. O arquivo original foi preservado.')
+                    self.status.set('Preparação interrompida: '+(
+                        'modelo XLSX de versão diferente; revise ou atualize o arquivo.'
+                        if categoria=='LAYOUT_XLSX_INCOMPATIVEL'
+                        else 'falha técnica; consulte o TXT gerado na pasta da planilha.'))
                     self._evento_seguro('PREPARO_ERRO','preparo')
-                    if self.historico: 
-                        try:self.historico.encerrar('FALHA_TECNICA')
-                        except OSError:pass
+                    # Gerar um TXT mesmo quando nenhuma etapa foi concluída.
+                    # A função sanitiza os campos, sem aceitar mensagens livres.
+                    try:
+                        self._registrar_falha_preparacao(segundos)
+                    except (OSError,ValueError):
+                        self.status.set('Falha na preparação; TXT indisponível. Acione a TI.')
                 elif evento=='historico_preparacao':
                     if self.historico:
                         try:
@@ -1009,6 +1036,28 @@ class Aplicativo:
                 sem_divergencia_identificada=positivos,pendencias=pendencias,
                 erros_tecnicos=self.dados_atuais.get('falhas',0))
         except (OSError,ValueError):pass
+
+    def _registrar_falha_preparacao(self, segundos: float) -> None:
+        """TXT diagnóstico seguro disponível mesmo sem arquivo XLSX concluído."""
+        if not self.arquivo_planilha:
+            return
+        self.estatisticas.encerrar(segundos=segundos,situacao='PARCIAL')
+        self.estatisticas.diagnosticar('FIM_EXECUCAO','ERRO',segundos=segundos,
+                                     categoria='PREPARACAO_NAO_CONCLUIDA')
+        if self.historico and not self.historico.termino:
+            try:self.historico.encerrar('FALHA_TECNICA')
+            except (OSError,ValueError):pass
+        carimbo=datetime.now().strftime('%d%m%Y_%H%M%S')
+        pasta=self.arquivo_planilha.parent
+        destino=pasta/f'RELATORIO_TECNICO_RPA_FALHA_{carimbo}.txt'
+        if destino.exists():
+            import uuid
+            destino=pasta/f'RELATORIO_TECNICO_RPA_FALHA_{carimbo}_{uuid.uuid4().hex[:6]}.txt'
+        relatorio_tecnico(self.estatisticas,self.historico,destino)
+        self.estatisticas.relatorio=destino.name
+        self.resultado_arquivo_log.set(f'Diagnóstico da falha: {destino.name}')
+        self.relatorio_finalizado=True
+        self.status.set(self.status.get()+f' Diagnóstico: {destino.name}')
 
     def _finalizar_relatorio(self):
         if self.relatorio_finalizado or not self.sessao.origem:

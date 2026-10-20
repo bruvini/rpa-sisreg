@@ -27,7 +27,8 @@ CATEGORIAS_SEGURAS = frozenset({'NENHUM', 'TIMEOUT_SELETOR', 'TIMEOUT_NAVEGADOR'
     'RESULTADO_AMBIGUO', 'FICHA_NAO_ABERTA', 'AIH_NAO_CONFIRMADA',
     'PROCEDIMENTO_DIVERGENTE', 'CAMPOS_FICHA_INCOMPLETOS', 'PLANILHA_BLOQUEADA',
     'PERSISTENCIA_FALHOU', 'FALHA_NAVEGACAO', 'ERRO_NAO_CLASSIFICADO',
-    'CAPTURA_SEM_RESULTADO', 'INTERRUPCAO_SOLICITADA'})
+    'CAPTURA_SEM_RESULTADO', 'INTERRUPCAO_SOLICITADA',
+    'LAYOUT_XLSX_INCOMPATIVEL', 'PREPARACAO_NAO_CONCLUIDA'})
 
 
 def categoria_excecao(tipo: str) -> str:
@@ -36,6 +37,7 @@ def categoria_excecao(tipo: str) -> str:
             'NavegacaoInesperada': 'SELETOR_NAO_ENCONTRADO',
             'FormularioInesperado': 'SESSAO_NAO_AUTORIZADA',
             'AlteracaoExterna': 'PLANILHA_BLOQUEADA',
+            'LayoutPlanilhaIncompativel': 'LAYOUT_XLSX_INCOMPATIVEL',
             'PermissionError': 'PLANILHA_BLOQUEADA'}.get(tipo, 'ERRO_NAO_CLASSIFICADO')
 
 

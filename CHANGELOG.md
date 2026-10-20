@@ -1,3 +1,13 @@
+## 0.7.3 — 20/10/2026 · Recuperação da preparação XLSX
+
+- Corrige `AlteracaoExterna` ao receber planilhas legadas com oito colunas técnicas H:O; mantém suporte H:P e ao layout final H:K.
+- Validar os cabeçalhos antes da indexação do PDF, preservando dados adicionais desconhecidos sem alterações.
+- Corrige o descarte seguro de cópia de trabalho não gravada, com hash da fonte original separado do hash do arquivo salvo.
+- Gera TXT técnico estruturado no caso de falha da preparação, sem informações identificáveis; não depende da conclusão das três etapas.
+- Restaura o ícone ICO original completo fornecido pela fiscalização; o logotipo PNG permanece no cabeçalho.
+- Não altera seletores de navegação, consultas hospitalares ou julgamento fiscal.
+- Testes: 150 descobertos; 146 executados sem falhas, 4 ignorados.
+
 ## 0.7.2 — Entrega XLSX simplificada e ícone legível (20/10/2026)
 
 - Mantidos os sete campos originais; exportação passa a ter quatro campos H:K, em vez de nove H:P.

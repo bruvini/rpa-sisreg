@@ -12,6 +12,40 @@ CABECALHOS_LEGADOS = ('rpaSituacao', 'rpaDetalhe', 'rpaOrigemPDF',
     'rpaConsultaAmbulatorial', 'rpaAtualizadoEm', 'rpaConsultaHospitalar',
     'rpaProcedimentoSISREG', 'rpaTempoConsultaSegundos', 'rpaNumeroSolicitacao')
 
+
+class LayoutPlanilhaIncompativel(ValueError):
+    """Layout de saída desconhecido: nenhum dado do hospital deve ser modificado."""
+
+
+def identificar_layout(ws) -> str:
+    """Aceita a saída final e as duas variantes históricas conhecidas (H:O/H:P).
+
+    Considera apenas cabeçalhos não vazios, nunca conteúdo de pacientes.
+    Aborta se houver qualquer coluna adicional desconhecida: proteção contra
+    excluir acidentalmente informações recebidas do hospital.
+    """
+    valores = [str(ws.cell(1, i).value or '').strip()
+               for i in range(8, max(ws.max_column, 16) + 1)]
+    existentes = tuple(v for v in valores if v)
+    if not existentes:
+        modo, ultima_coluna = 'novo', 7
+    elif existentes == CAMPOS_FINAIS:
+        modo, ultima_coluna = 'novo', 11
+    elif existentes in (CABECALHOS_LEGADOS, CABECALHOS_LEGADOS[:-1]):
+        modo, ultima_coluna = 'legado', 7 + len(existentes)
+    else:
+        raise LayoutPlanilhaIncompativel(
+            'Colunas adicionais não reconhecidas. Preserve a planilha e confira os cabeçalhos H em diante.')
+    # Um cabeçalho vazio não autoriza excluir dados abaixo dele.
+    # Em particular, ao migrar o legado H:O, jamais apague P e seguintes
+    # se houver valores que não sejam controlados pelo RPA.
+    if ws.max_column > ultima_coluna:
+        for linha in ws.iter_rows(min_row=2,min_col=ultima_coluna+1,
+                                  max_col=ws.max_column, values_only=True):
+            if any(c is not None and str(c).strip() for c in linha):
+                raise LayoutPlanilhaIncompativel('Dados adicionais sem cabeçalho reconhecido; revisão necessária.')
+    return modo
+
 AUSENCIA_PDF = {'AIH_AUSENTE_NO_PDF', 'ESPELHO_NAO_LOCALIZADO', 'AIH_FORMATO_INVALIDO'}
 DIVERGENCIA_PDF = {'NOME_DIVERGENTE_ESPELHO', 'NOME_AUSENTE_NO_ESPELHO',
     'ESPELHOS_CONFLITANTES', 'CPF_CONFLITANTE_PDF', 'CNS_CONFLITANTE_PDF',
@@ -74,14 +108,12 @@ def data_br(valor: str):
 def adequar_colunas(ws) -> None:
     """Preserva A:G e outras colunas não controladas; migra só layout conhecido."""
     from openpyxl.styles import Alignment, Font, PatternFill, Border, Side
-    cabecalhos = [str(ws.cell(1,c).value or '') for c in range(8, max(ws.max_column, 16)+1)]
-    existentes = [c for c in cabecalhos if c]
-    # Outras colunas não são nossas — não deletar dados do hospital.
-    if existentes and tuple(existentes[:len(CAMPOS_FINAIS)]) != CAMPOS_FINAIS:
-        if tuple(existentes[:len(CABECALHOS_LEGADOS)]) == CABECALHOS_LEGADOS:
-            ws.delete_cols(8, len(CABECALHOS_LEGADOS))
-        else:
-            raise ValueError('Colunas adicionais não reconhecidas: manter dados e revisar a planilha antes de exportar.')
+    layout = identificar_layout(ws)
+    if layout == 'legado':
+        # H:O tinha 8 colunas nas primeiras entregas; H:P passou a ter 9.
+        # Ambas são layouts controlados pelo RPA, não dados do hospital.
+        # A migração só ocorre após verificar TODOS os cabeçalhos.
+        ws.delete_cols(8, len(CABECALHOS_LEGADOS))
     from openpyxl.styles import Alignment, Font, PatternFill, Border, Side
     for col, titulo in enumerate(CAMPOS_FINAIS, 8):
         c=ws.cell(1,col)
