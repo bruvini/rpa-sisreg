@@ -1,3 +1,17 @@
+# Histórico de versões — RPA SISREG
+
+## v0.6.1 — Usabilidade e identificação cadastral (20/10/2026)
+
+- Preparação progressiva: tabela da etapa 1 aparece assim que o XLSX é lido e recebe atualizações em pequenos lotes durante o cruzamento com o PDF. A indexação textual do PDF ocorre antes das atualizações por AIH.
+- Etapa 1 exibe **Aba, Linha, AIH, Paciente, CPF e Situação**; CNS permanece apenas na etapa 2. Situações ganham rótulos simples na interface; códigos técnicos permanecem na planilha para rastreabilidade.
+- Botão **Próxima etapa** no rodapé, habilitado somente quando a etapa correspondente tiver sido concluída, sem alterar o bloqueio das abas.
+- Etapa 2 tem tabela de pacientes com coluna CNS, atualizada a cada consulta realizada.
+- Procura resultado de pesquisa cadastral também em outras janelas oficiais abertas na mesma sessão do navegador, além de quadros/iframes, e considera nomes em células de tabelas do SISREG legado. Continua bloqueando CPF/nome divergente ou CNS múltiplo.
+- Cópia de trabalho no formato `Planilha_RPA_DDMMAAAA_HHMMSS.xlsx`, com sufixo `_2`, `_3` quando houver nome já utilizado, sem sobrescrever a fonte.
+- Resumo de CPFs diferencia documentos disponíveis de campos preenchidos **nesta execução**, inclusive quando a entrada já contém os CPFs.
+- Sem mudanças na consulta hospitalar ou nas regras de auditoria. Testes exclusivamente sintéticos.
+- A associação automática do CNS depende de homologação no HTML da tela real; **não há garantia de CNS encontrado quando a identidade não está visível de forma inequívoca**.
+
 # Histórico de versões
 
 ## v0.6.0 — Endurecimento, governança e rastreabilidade (19/10/2026)

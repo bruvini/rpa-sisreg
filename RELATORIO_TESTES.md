@@ -1,14 +1,12 @@
-# Verificação técnica — v0.6.0
+# Relatório de testes — RPA SISREG v0.6.1
 
-- Baseline v0.5 executado **antes das alterações**: 65 testes, 0 falhas e 3 skipped.
-- Após alterações: **87 testes executados, 0 falhas, 3 ignorados**, incluindo 22 novos testes de governança e segurança. Os testes usam apenas dados sintéticos.
-- Três testes gráficos dependentes de ambiente foram ignorados pelo executor; também foi realizado um teste de abertura do Tkinter em display virtual.
-- **Não** houve login real no SISREG nesta execução nem compilação Windows em ambiente local Linux.
-- Lista de aceite: fonte intacta, PDF lido localmente, histórico sem CPF/CNS/nome/senha, eventos fechados, limpeza temporária seletiva, arquivos de trabalho separados, pendências mínimas, compilação com versão, ausência de chamadas externas novas, sem decisão de atesto.
+Data: 20/10/2026. Execução sintética e local, sem autenticação nem requisições ao SISREG real.
 
-## Limites da validação
+- Descobertos: **96 testes**; testes-padrão: **OK**, 4 ignorados por depender de display/teste DOM; execução com display virtual: **OK**, 1 ignorado (Chromium offline não habilitado nesta passagem).
+- Chromium offline: teste anterior de HTML do CNS destacado (`td > font > b`) aprovado.
+- Regressões v0.2 a v0.6: continuidade dos controles de CPF/CNS, cópia de trabalho e trilha administrativa.
+- Novas verificações: callback progressivo do PDF, situação legível, coluna CNS exclusiva da etapa 2, botão Próxima etapa, nome dinâmico com colisão, vínculo ao resultado em popup oficial, proibição de página externa e bloqueio de CNS divergentes.
+- Janela 1080×750: tabela CNS com 209 pixels de altura no display virtual; avaliada a navegação entre etapas.
+- **Não homologado:** extração efetiva do CNS na página autenticada SISREG; um nome em DOM diferente ou um resultado ambíguo seguirá como pendência. Também não foi executada a compilação Windows nesta sessão.
 
-- `pip` e GitHub Actions baixam dependências no **ambiente de compilação**, sem arquivos hospitalares.
-- Não é possível garantir que estação, navegador, proxy, antivirus e pasta de rede institucional cumpram integralmente requisitos apenas com testes locais.
-- Logs e arquivo de trabalho são locais e não automaticamente criptografados. Controlar permissões/retensão com a TI.
-- Compilação e execução real do novo EXE devem ser homologadas; metadados Windows ainda dependem de CI.
+A aplicação não toma decisão fiscal nem substitui o julgamento do servidor. Não inserir dados de pacientes reais nos testes, issues ou GitHub Actions.

@@ -270,9 +270,21 @@ def ler_cns_negrito_pagina(pagina, nome_esperado, cpf_esperado, espera=3200, con
                       if (/cpf/.test(rotulo)) return 'CPF: ' + String(e.value).trim();
                       return '';
                     }).filter(Boolean);
+                  // SISREG legado pode ter o nome em INPUT sem name/id expressivo,
+                  // mas com etiqueta na primeira célula da linha da tabela.
+                  const linhas = [...document.querySelectorAll('tr')].flatMap(tr => {
+                    const cells=[...tr.querySelectorAll(':scope > td, :scope > th')];
+                    if (cells.length<2) return [];
+                    const rotulo=(cells[0].textContent || '').trim().replace(/[:\s]+$/, '');
+                    if (!/^(?:nome(?:\s+(?:do|da)\s+paciente)?|paciente|cpf)$/i.test(rotulo)) return [];
+                    const valor=cells[1].querySelector('input, textarea');
+                    const texto=(valor?.value || cells[1].textContent || '').trim();
+                    return texto && (valor ? valor.getClientRects().length : cells[1].getClientRects().length)
+                      ? [rotulo + ': ' + texto] : [];
+                  });
                   const doc = document.querySelector('input[name="cpf"],input[id="cpf"],input[name="nu_cpf"]');
                   return {
-                    texto: (document.body?.innerText || '') + '\n' + campos.join('\n'),
+                    texto: (document.body?.innerText || '') + '\n' + campos.join('\n') + '\n' + linhas.join('\n'),
                     numeros: [...document.querySelectorAll('td[colspan="2"] font[size="3"] b')]
                       .filter(e => !!e.getClientRects().length)
                       .map(e => (e.textContent || '').trim()),
@@ -299,3 +311,41 @@ def ler_cns_negrito_pagina(pagina, nome_esperado, cpf_esperado, espera=3200, con
                 continue
         time.sleep(.3)
     return None, ultima
+
+
+def ler_cadastro_contexto(contexto, pagina_origem, nome, cpf, espera=7500):
+    """Pesquisa resultado na aba que abriu após a consulta, inclusive popups.
+
+    Nunca usa resultado de página não oficial. Uma página que não exibe nome
+    identificável não autoriza gravar CNS. Múltiplos CNS => revisão humana.
+    """
+    limite=time.monotonic()+espera/1000
+    ultimo='NOME_NAO_CONFIRMADO_RESULTADO'
+    while time.monotonic()<limite:
+        candidatos=[]
+        # Popups mais recentes primeiro; a página original também é consultada.
+        for pg in reversed(list(getattr(contexto,'pages',[pagina_origem]))):
+            try:
+                if pg.is_closed(): continue
+                origem_autorizada(pg)
+                candidatos.append(pg)
+            except (NavegacaoInesperada, ValueError):
+                continue
+        if pagina_origem not in candidatos:
+            try:
+                origem_autorizada(pagina_origem)
+                candidatos.append(pagina_origem)
+            except (NavegacaoInesperada, ValueError): pass
+        confirmados=set()
+        for pg in candidatos:
+            numero,motivo=ler_resultado_cadastro(pg,nome,cpf,espera=1200)
+            if numero: confirmados.add(numero)
+            else: ultimo=motivo or ultimo
+            if motivo=='CPF_DIVERGENTE_CADASTRO':
+                return None,motivo
+        if len(confirmados)>1:
+            return None,'CNS_DESTACADO_AMBIGUO_OU_AUSENTE'
+        if len(confirmados)==1:
+            return next(iter(confirmados)),'CNS_CONFIRMADO_SISREG'
+        time.sleep(.18)
+    return None,ultimo

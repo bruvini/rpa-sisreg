@@ -114,7 +114,6 @@ class SessaoPlanilha:
     def preparar_copia_de_trabalho(self) -> Path:
         """Não modifica a fonte selecionada; a cópia é automática, sem nova etapa."""
         import shutil
-        import uuid
         from persistencia import sha256
         if not self.origem:
             raise ValueError('Nenhum arquivo de origem carregado.')
@@ -123,10 +122,21 @@ class SessaoPlanilha:
         entrada = Path(self.origem)
         if sha256(entrada) != self.hash_planilha:
             raise ValueError('A planilha de entrada mudou após sua leitura. Recarregue o arquivo.')
-        destino = entrada.with_name(
-            entrada.stem + '_RPA_conferencia_' + datetime.now().strftime('%Y%m%d_%H%M%S_')
-            + uuid.uuid4().hex[:6] + entrada.suffix)
-        shutil.copy2(entrada, destino)
+        # Nome padronizado e ordenável no Explorer, sem nomes de pacientes ou AIHs.
+        momento = datetime.now().strftime('%d%m%Y_%H%M%S')
+        base = f'Planilha_RPA_{momento}'
+        destino = entrada.with_name(base + '.xlsx')
+        sufixo = 2
+        while destino.exists():
+            destino = entrada.with_name(f'{base}_{sufixo}.xlsx')
+            sufixo += 1
+        # x = exclusivo: evita sobrescrever arquivos criados concorrentemente.
+        try:
+            with entrada.open('rb') as origem_arq, destino.open('xb') as nova:
+                shutil.copyfileobj(origem_arq, nova)
+        except Exception:
+            destino.unlink(missing_ok=True)
+            raise
         if sha256(destino) != self.hash_planilha:
             destino.unlink(missing_ok=True)
             raise ValueError('Cópia de trabalho inválida; planilha de entrada preservada.')
@@ -134,39 +144,44 @@ class SessaoPlanilha:
         self.origem = destino
         return destino
 
-    def complementar_pdf(self, index: dict[str, list[Espelho]], caminho_pdf: str | Path) -> dict[str, int]:
+    def complementar_pdf(self, index: dict[str, list[Espelho]], caminho_pdf: str | Path,
+                        progresso=None) -> dict[str, int]:
         if not self.origem:
             raise ValueError('Carregue primeiro a planilha.')
         caminho_pdf = Path(caminho_pdf)
         self.hash_pdf = hashlib.sha256(caminho_pdf.read_bytes()).hexdigest()
         contagem: dict[str, int] = {}
-        for r in self.registros:
-            if not r.aih or not r.nome:
-                continue
-            e, resultado = escolher_espelho(index.get(r.aih, []), r.nome)
-            contagem[resultado] = contagem.get(resultado, 0) + 1
-            r.origem_pdf = f'Página {e.pagina}' if e else ''
-            if e is None:
-                if r.situacao in ('AIH_FORMATO_INVALIDO', 'CPF_HOSPITAL_INVALIDO', 'CNS_HOSPITAL_INVALIDO', 'NOME_NAO_INFORMADO'):
+        for indice, r in enumerate(self.registros, 1):
+            try:
+                if not r.aih or not r.nome:
                     continue
-                r.situacao = resultado
-                r.detalhe = 'Necessária revisão; nenhum identificador foi alterado.'
-                continue
-            if e.cpf and r.cpf and digitos(r.cpf) != e.cpf:
-                r.situacao = 'CPF_CONFLITANTE_PDF'
-                r.detalhe = 'CPF do hospital e CPF do espelho são diferentes; não alterados.'
-                continue
-            if e.cns and r.cns and digitos(r.cns) != e.cns:
-                r.situacao = 'CNS_CONFLITANTE_PDF'
-                r.detalhe = 'CNS do hospital e CNS do espelho são diferentes; não alterados.'
-                continue
-            if e.cpf and not r.cpf:
-                r.cpf = e.cpf
-            if e.cns and not r.cns:
-                r.cns = e.cns
-            if r.situacao == 'PRONTO_PARA_CONFERENCIA':
-                r.situacao = 'DOCUMENTO_PDF_LOCALIZADO' if e.cpf or e.cns else 'PDF_SEM_DOCUMENTO_VALIDO'
-                r.detalhe = 'Registro de espelho correspondente pela AIH e nome.'
+                e, resultado = escolher_espelho(index.get(r.aih, []), r.nome)
+                contagem[resultado] = contagem.get(resultado, 0) + 1
+                r.origem_pdf = f'Página {e.pagina}' if e else ''
+                if e is None:
+                    if r.situacao in ('AIH_FORMATO_INVALIDO', 'CPF_HOSPITAL_INVALIDO', 'CNS_HOSPITAL_INVALIDO', 'NOME_NAO_INFORMADO'):
+                        continue
+                    r.situacao = resultado
+                    r.detalhe = 'Necessária revisão; nenhum identificador foi alterado.'
+                    continue
+                if e.cpf and r.cpf and digitos(r.cpf) != e.cpf:
+                    r.situacao = 'CPF_CONFLITANTE_PDF'
+                    r.detalhe = 'CPF do hospital e CPF do espelho são diferentes; não alterados.'
+                    continue
+                if e.cns and r.cns and digitos(r.cns) != e.cns:
+                    r.situacao = 'CNS_CONFLITANTE_PDF'
+                    r.detalhe = 'CNS do hospital e CNS do espelho são diferentes; não alterados.'
+                    continue
+                if e.cpf and not r.cpf:
+                    r.cpf = e.cpf
+                if e.cns and not r.cns:
+                    r.cns = e.cns
+                if r.situacao == 'PRONTO_PARA_CONFERENCIA':
+                    r.situacao = 'DOCUMENTO_PDF_LOCALIZADO' if e.cpf or e.cns else 'PDF_SEM_DOCUMENTO_VALIDO'
+                    r.detalhe = 'Registro de espelho correspondente pela AIH e nome.'
+            finally:
+                if progresso:
+                    progresso(indice, r, len(self.registros))
         return contagem
 
     def registrar_cadastro_em_lote(self, registro: Registro, cns: str | None, motivo: str) -> None:

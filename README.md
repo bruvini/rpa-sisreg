@@ -1,8 +1,14 @@
-# RPA SISREG · Conferência de internações (v0.6.0)
+# RPA SISREG · Conferência de internações (v0.6.1)
 
 **Estado:** protótipo institucional em homologação. A publicação de código não significa autorização da Regulação ou da TI para automação em produção. Não é um sistema de atesto ou decisão fiscal.
 
 > **Princípio:** a máquina executa o trabalho repetitivo; o fiscal analisa as exceções e toma a decisão.
+
+### Ajustes operacionais v0.6.1
+
+A preparação apresenta registros e CPFs progressivamente, assim que o PDF termina de ser indexado. A primeira tabela mostra apenas os dados da etapa 1 e utiliza situações legíveis. O botão **Próxima etapa** no rodapé fica disponível ao concluir a preparação. A etapa 2 tem tabela própria que atualiza CNS e situação para cada consulta terminada. A fonte recebida segue intacta; a cópia gerada chama-se `Planilha_RPA_DDMMAAAA_HHMMSS.xlsx`, com sufixo se houver duplicata.
+
+O resultado cadastral pode ser aberto pelo SISREG em uma segunda janela. A captura agora procura páginas oficiais abertas na sessão, sem aceitar páginas externas e sem presumir identidade pelo CPF de busca isolado. São necessários nome compatível e CNS único; nomes não confirmados ficam pendentes. Os campos e regras da terceira etapa não mudaram. A ausência de CNS no Excel após o teste real requer inspeção da estrutura da página de resultado pela equipe autorizada, sem publicar prints contendo dados de pacientes.
 
 ## Finalidade e origem
 
@@ -18,7 +24,7 @@ A etapa 3 **não** atesta procedimentos, não altera solicitações no SISREG e 
 
 ## Alteração de segurança v0.6: planilha original intocada
 
-Ao preparar, o RPA lê o **XLSX selecionado somente para leitura** e cria automaticamente, na mesma pasta institucional, um arquivo `NOME_RPA_conferencia_AAAAMMDD_HHMMSS_XXXXXX.xlsx`. **Todos os CPFs, CNS, caráters e autorizadores enriquecidos passam a ser salvos nesse arquivo de trabalho**. Nenhuma confirmação adicional é pedida. O XLSX recebido e o PDF nunca são editados/excluídos. O controle SHA-256 detecta se o arquivo de trabalho foi alterado externamente. Caso precise retomar em outro dia, selecione uma cópia de trabalho existente, que gerará outra versão sem destruir a anterior. Backup antigo e arquivos existentes não são apagados pelo RPA.
+Ao preparar, o RPA lê o **XLSX selecionado somente para leitura** e cria automaticamente, na mesma pasta institucional, um arquivo `Planilha_RPA_DDMMAAAA_HHMMSS.xlsx` (sufixo numérico, se necessário). **Todos os CPFs, CNS, caráters e autorizadores enriquecidos passam a ser salvos nesse arquivo de trabalho**. Nenhuma confirmação adicional é pedida. O XLSX recebido e o PDF nunca são editados/excluídos. O controle SHA-256 detecta se o arquivo de trabalho foi alterado externamente. Caso precise retomar em outro dia, selecione uma cópia de trabalho existente, que gerará outra versão sem destruir a anterior. Backup antigo e arquivos existentes não são apagados pelo RPA.
 
 A planilha enriquecida mantém as colunas originais e as colunas de rastreabilidade dentro do próprio XLSX, sob controles de armazenamento da instituição. **Não compartilhe esse arquivo por GitHub, issue ou ferramenta de IA.**
 
@@ -66,7 +72,7 @@ Na etapa 3, existe **Exportar somente pendências (XLSX)** opcional. Contém ape
 
 ## Compilação Windows
 
-O arquivo `.github/workflows/compilar-windows.yml` constrói no GitHub Actions com dependências fixadas em `requirements-build.txt`, sem dados reais. O workflow executa testes, gera `src/build_info.py` com data UTC da compilação e `versao_windows.txt` com recurso de versão Windows, depois compila `dist/SISREG_Login.exe` via PyInstaller. O EXE mostra `0.6.0` na interface e metadados de versão nas propriedades do arquivo.
+O arquivo `.github/workflows/compilar-windows.yml` constrói no GitHub Actions com dependências fixadas em `requirements-build.txt`, sem dados reais. O workflow executa testes, gera `src/build_info.py` com data UTC da compilação e `versao_windows.txt` com recurso de versão Windows, depois compila `dist/SISREG_Login.exe` via PyInstaller. O EXE mostra `0.6.1` na interface e metadados de versão nas propriedades do arquivo.
 
 Para compilar em Windows *autorizado* com Python de desenvolvimento, use `powershell -File .\compilar_windows.ps1`. A estação da Joice não precisa de Python. O workflow produz o artefato **SISREG_Login_Windows** com `SISREG_Login.exe` e SHA-256 para comparação.
 

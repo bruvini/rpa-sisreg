@@ -14,7 +14,7 @@ import os
 from pathlib import Path
 from tkinter import filedialog
 from datetime import datetime
-from sisreg_navigation import (consultar_cadastro, ler_resultado_cadastro, autenticao_ativa, NavegacaoInesperada)
+from sisreg_navigation import (consultar_cadastro, ler_cadastro_contexto, autenticao_ativa, NavegacaoInesperada)
 from aih_extract import ler_espelhos_pdf, cpf_valido, cns_formato
 from planilha import SessaoPlanilha
 from sisreg_navigation import NavegacaoInesperada
@@ -24,6 +24,7 @@ import tkinter as tk
 from tkinter import ttk
 from urllib.parse import urlparse
 from app_info import APP_VERSION, rotulo_versao
+from apresentacao import rotulo_situacao
 from governanca import HistoricoExecucao, exportar_pendencias, limpeza_temporarios
 
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
@@ -214,7 +215,7 @@ class Aplicativo:
         grade=ttk.Frame(a);grade.pack(fill='both',expand=True)
         self.grade=grade
         cfg=[('aba','Aba',130),('linha','Linha',52),('aih','AIH',122),('paciente','Paciente',240),
-             ('cpf','CPF',109),('cns','CNS',140),('situacao','Situação',260)]
+             ('cpf','CPF',112),('situacao','Situação',305)]
         self.tabela=ttk.Treeview(grade,columns=[x[0] for x in cfg],show='headings')
         for chave,titulo,w in cfg:
             self.tabela.heading(chave,text=titulo)
@@ -253,13 +254,29 @@ class Aplicativo:
         ttk.Label(b,textvariable=self.diagnostico_cns,wraplength=930).pack(anchor='w',pady=(0,8))
         self.barra=ttk.Progressbar(b,mode='determinate',maximum=100,value=0)
         self.barra.pack(fill='x')
+        ttk.Label(b,text='Cadastros consultados — CNS e situação atualizados durante a pesquisa',
+                  font=('Segoe UI',10,'bold')).pack(anchor='w',pady=(11,5))
+        quadro_cns=ttk.Frame(b)
+        quadro_cns.pack(fill='both',expand=True,pady=(0,4))
+        colunas_cns=[('aba','Aba',125),('linha','Linha',48),('aih','AIH',115),
+                     ('paciente','Paciente',220),('cpf','CPF',106),('cns','CNS',132),
+                     ('situacao','Situação',245)]
+        self.tabela_cns=ttk.Treeview(quadro_cns,columns=[x[0] for x in colunas_cns],
+                                    show='headings',height=8)
+        for chave,titulo,largura in colunas_cns:
+            self.tabela_cns.heading(chave,text=titulo)
+            self.tabela_cns.column(chave,width=largura,minwidth=40,stretch=(chave=='paciente'))
+        barra_cns=ttk.Scrollbar(quadro_cns,orient='vertical',command=self.tabela_cns.yview)
+        self.tabela_cns.configure(yscrollcommand=barra_cns.set)
+        self.tabela_cns.pack(side='left',fill='both',expand=True)
+        barra_cns.pack(side='right',fill='y')
         ttk.Label(b,text='O RPA pesquisa CPF por CPF. Só grava CNS quando o resultado mostra nome '
                   'inequívoco e um único CNS identificado. Resultados ambíguos viram pendência; '
                   'o robô segue para o próximo paciente. A etapa 3 pesquisa a AIH hospitalar.',
-                  wraplength=930).pack(anchor='w',pady=(15,0))
+                  wraplength=930).pack(anchor='w',pady=(6,0))
         ttk.Label(b,text='A planilha é salva ao longo do lote. Feche-a no Excel antes de iniciar; '
                   'o programa interrompe a gravação se detectar edição externa ou bloqueio do arquivo.',
-                  wraplength=930).pack(anchor='w',pady=(12,0))
+                  wraplength=930).pack(anchor='w',pady=(6,0))
         ttk.Label(c,text='Etapa 3 — Consultar solicitações hospitalares por CNS e AIH',
                   font=('Segoe UI',13,'bold')).pack(anchor='w',pady=(0,10))
         ttk.Label(c,text='Após os CNS serem preenchidos, o robô pesquisa as solicitações hospitalares do CNS, '
@@ -284,7 +301,44 @@ class Aplicativo:
         ttk.Label(rodape,text=f'v{APP_VERSION}  ·  A automação identifica dados; o atesto é decisão do fiscal.',
                   foreground='#4c6375').pack(side='left',padx=(0,10))
         ttk.Label(rodape,textvariable=self.status,wraplength=700).pack(side='left',fill='x',expand=True)
-        ttk.Button(rodape,text='Encerrar',command=self.encerrar).pack(side='right')
+        self.btn_encerrar=ttk.Button(rodape,text='Encerrar',command=self.encerrar)
+        self.btn_encerrar.pack(side='right')
+        self.btn_proxima=ttk.Button(rodape,text='Próxima etapa  →',
+                                    command=self._proxima_etapa, state='disabled')
+        self.btn_proxima.pack(side='right',padx=(0,10))
+        self.abas.bind('<<NotebookTabChanged>>',self._atualizar_avanco)
+
+    def _atualizar_avanco(self, _evento=None):
+        if not hasattr(self,'btn_proxima'): return
+        atual=self.abas.index(self.abas.select())
+        pronto = ((atual==0 and self.preparo_concluido and not self.carregando) or
+                  (atual==1 and self.cadastro_concluido and not self.processando))
+        self.btn_proxima.configure(state='normal' if pronto else 'disabled')
+        if atual>=2:
+            self.btn_proxima.pack_forget()
+        elif not self.btn_proxima.winfo_manager():
+            self.btn_proxima.pack(side='right',padx=(0,10),before=self.btn_encerrar)
+
+    def _proxima_etapa(self):
+        atual=self.abas.index(self.abas.select())
+        if atual==0 and self.preparo_concluido and not self.carregando:
+            self.abas.select(1)
+        elif atual==1 and self.cadastro_concluido and not self.processando:
+            self.abas.select(2)
+        self._atualizar_avanco()
+
+    def _linha_visual(self, r, com_cns=False):
+        dados=(r.aba,r.linha,r.aih,r.nome,r.cpf)
+        if com_cns: dados+=(r.cns,)
+        return dados+(rotulo_situacao(r.situacao),)
+
+    def _atualizar_linha_visual(self, indice, dados, com_cns=False):
+        tabela=self.tabela_cns if com_cns else self.tabela
+        iid=str(indice)
+        if tabela.exists(iid):
+            tabela.item(iid,values=dados)
+        else:
+            tabela.insert('','end',iid=iid,values=dados)
 
     def _escolher_xlsx(self):
         arq=filedialog.askopenfilename(title='Planilha-padrão',filetypes=[('Excel','*.xlsx')])
@@ -340,10 +394,20 @@ class Aplicativo:
             try:
                 sessao=SessaoPlanilha()
                 sessao.carregar(self.arquivo_planilha)
+                # Uma tabela provisória aparece imediatamente; nenhum widget Tk
+                # é acessado pela thread de processamento.
+                self.eventos.put(('preparo_inicio', [
+                    (i, self._linha_visual(r)) for i,r in enumerate(sessao.registros)]))
                 informacao='PDF não informado.'
                 if self.arquivo_pdf:
                     ix,avisos=ler_espelhos_pdf(self.arquivo_pdf)
-                    sessao.complementar_pdf(ix,self.arquivo_pdf)
+                    lote=[]
+                    def ao_complementar(indice, registro, total):
+                        lote.append((indice-1, self._linha_visual(registro)))
+                        if len(lote) >= 8 or indice == total:
+                            self.eventos.put(('preparo_linhas', (lote[:],indice,total)))
+                            lote.clear()
+                    sessao.complementar_pdf(ix,self.arquivo_pdf,progresso=ao_complementar)
                     informacao=f'{len(ix)} AIHs indexadas no espelho.'
                     if avisos: informacao+=' Estrutura do PDF requer revisão.'
                 trabalho=sessao.preparar_copia_de_trabalho()
@@ -367,10 +431,12 @@ class Aplicativo:
         return f'{h}h {m}min {s}s' if h else f'{m}min {s}s'
 
     def _atualizar_tabela(self):
-        itens=self.tabela.get_children()
-        if itens:self.tabela.delete(*itens)
+        for tabela in (self.tabela,self.tabela_cns):
+            itens=tabela.get_children()
+            if itens:tabela.delete(*itens)
         for i,r in enumerate(self.sessao.registros):
-            self.tabela.insert('','end',iid=str(i),values=(r.aba,r.linha,r.aih,r.nome,r.cpf,r.cns,r.situacao))
+            self._atualizar_linha_visual(i,self._linha_visual(r))
+            self._atualizar_linha_visual(i,self._linha_visual(r,com_cns=True),True)
 
     def _iniciar_login(self):
         if not self.preparo_concluido or self.carregando:
@@ -453,7 +519,7 @@ class Aplicativo:
                             # Pesquisa sempre no contexto oficial; nunca cadastra nem altera solicitações.
                             pagina=validas[-1]
                             consultar_cadastro(pagina,identificador)
-                            cns,motivo=ler_resultado_cadastro(pagina,r.nome,identificador,espera=7500)
+                            cns,motivo=ler_cadastro_contexto(contexto,pagina,r.nome,identificador,espera=7500)
                             erros_seguidos=0
                         except Exception as exc:
                             cns,motivo=None,'FALHA_DE_NAVEGACAO_OU_TEMPO'
@@ -490,6 +556,7 @@ class Aplicativo:
             self.status.set('Nenhum CPF elegível pendente. Etapa 2 concluída.')
             self.cadastro_concluido=True
             self.abas.tab(2,state='normal')
+            self._atualizar_avanco()
             return
         self.tipo_lote='cadastro';self.processando=True;self.persistencia_falhou=False;self.navegacao_falhou=False;self.pausa.clear();self.parar.clear()
         self.cadastro_concluido=False
@@ -549,26 +616,41 @@ class Aplicativo:
 
     def _ler_eventos(self):
         try:
-            while True:
+            passos=0
+            while passos < 3:
                 evento,dado=self.eventos.get_nowait()
-                if evento=='preparado':
+                passos+=1
+                if evento=='preparo_inicio':
+                    itens=self.tabela.get_children()
+                    if itens:self.tabela.delete(*itens)
+                    for indice,linha in dado:
+                        self._atualizar_linha_visual(indice,linha)
+                    self.atividade_preparo.set(f'{len(dado)} registros lidos. Localizando os CPFs no PDF...')
+                elif evento=='preparo_linhas':
+                    linhas,contador,total=dado
+                    for indice,linha in linhas:
+                        self._atualizar_linha_visual(indice,linha)
+                    self.atividade_preparo.set(f'Conferindo documentos: {contador}/{total} registros...')
+                elif evento=='preparado':
                     sessao,informacao,atualizacao,segundos=dado
                     self.sessao=sessao
                     self._atualizar_tabela()
                     self.cronometro.set('Tempo: '+self._duracao(segundos))
                     manual=len(sessao.registros)*MANUAL_SEGUNDOS_POR_AIH
                     self.resultado_titulo.set(f'✓ Extração automática concluída — {len(sessao.registros)} AIHs em {self._duracao(segundos)}')
+                    cpf_presentes=sum(bool(r.cpf) for r in sessao.registros)
                     self.resultado_descritivo.set(
-                        f'{atualizacao["cpf"]} CPF(s) gravados · {informacao}  |  '
+                        f'{cpf_presentes} CPFs disponíveis ({atualizacao["cpf"]} acrescentados agora) · {informacao}  |  '
                         f'Manual estimado: {self._duracao(manual)} (15 s/AIH, hipótese fixa). '
                         f'Diferença estimada: {self._duracao(max(0,manual-segundos))}. '
                         f'Cópia de trabalho: {sessao.origem.name}. Arquivo recebido preservado.')
                     self.cartao_resultado.pack(fill='x',pady=(0,8),before=self.grade)
-                    self.atividade_preparo.set('Concluído. Arquivo hospitalar atualizado.')
+                    self.atividade_preparo.set('Concluído. Cópia de trabalho atualizada.')
                     self.preparo_concluido=True
                     self.abas.tab(1,state='normal')
                     self.status.set('Etapa 1: dados extraídos na cópia de trabalho. Agora pode acessar o SISREG.')
                     self.carregando=False;self.btn_preparar.configure(state='normal')
+                    self._atualizar_avanco()
                 elif evento=='erro_preparo':
                     self.carregando=False;self.btn_preparar.configure(state='normal')
                     self.atividade_preparo.set('Falha na preparação; verifique o erro e tente novamente.')
@@ -598,8 +680,8 @@ class Aplicativo:
                     self.sessao.registrar_hospital(reg,resultado,duracao)
                     self._evento_seguro('HOSPITAL_OK' if resultado.situacao == 'FICHA_CONFERIDA' else 'HOSPITAL_PENDENCIA', 'hospital', contador)
                     if contador%15==0: self._salvar_checkpoint()
-                    if self.tabela.exists(str(idx)):
-                        self.tabela.item(str(idx),values=(reg.aba,reg.linha,reg.aih,reg.nome,reg.cpf,reg.cns,reg.situacao))
+                    self._atualizar_linha_visual(idx,self._linha_visual(reg))
+                    self._atualizar_linha_visual(idx,self._linha_visual(reg,com_cns=True),True)
                     self.barra_hospital.configure(value=100*contador/max(1,total))
                     self.progresso_hospital.set(f'{contador}/{total} consultadas · última: {resultado.situacao} · '
                                                f'{self._duracao(duracao)} nesta AIH')
@@ -630,8 +712,8 @@ class Aplicativo:
                     # Checkpoint a cada 10 linhas, sempre depois da confirmação objetiva.
                     if contador%10==0:
                         self._salvar_checkpoint()
-                    if self.tabela.exists(str(idx)):
-                        self.tabela.item(str(idx),values=(reg.aba,reg.linha,reg.aih,reg.nome,reg.cpf,reg.cns,reg.situacao))
+                    self._atualizar_linha_visual(idx,self._linha_visual(reg))
+                    self._atualizar_linha_visual(idx,self._linha_visual(reg,com_cns=True),True)
                     self.barra.configure(value=100*contador/max(total,1))
                     self.progresso.set(f'{contador}/{total} consultados · '
                                       f'{self.dados_atuais["cns"]} CNS identificados · '
@@ -648,6 +730,7 @@ class Aplicativo:
                     if not self.persistencia_falhou and not self.navegacao_falhou and processados==previstos and not self.parar.is_set():
                         self.cadastro_concluido=True
                         self.abas.tab(2,state='normal')
+                        self._atualizar_avanco()
                         self.status.set('Etapa 2 concluída: dados gravados na planilha. Etapa 3 liberada.')
                     elif self.navegacao_falhou and not self.persistencia_falhou:
                         self.status.set('Lote suspenso por falhas consecutivas do SISREG. Salvos os dados já obtidos; use Retomar quando disponível.')

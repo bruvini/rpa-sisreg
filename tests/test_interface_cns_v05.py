@@ -111,8 +111,8 @@ class TesteFluxoTk(unittest.TestCase):
             self.assertEqual(str(self.app.abas.tab(1,'state')),'normal')
             self.assertEqual(str(self.app.abas.tab(2,'state')),'disabled')
             self.assertIn('15 s/AIH',self.app.resultado_descritivo.get())
-            self.assertIn('Conferência concluída',self.app.resultado_titulo.get())
-            self.assertTrue((amostra.parent/'dados.backup_antes_RPA.xlsx').exists())
+            self.assertIn('Extração automática concluída',self.app.resultado_titulo.get())
+            self.assertTrue(any(x.name.startswith('Planilha_RPA_') and x.suffix=='.xlsx' for x in amostra.parent.iterdir()))
 
 
 if __name__ == '__main__':
