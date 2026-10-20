@@ -85,6 +85,9 @@ def gravar_na_origem(sessao, *, motivo='preparacao', backup=True) -> dict:
                 if valor.startswith(('=','+','-','@')):
                     valor = "'" + valor
                 cel=ws.cell(r.linha,col)
+                # Não apagar solicitação de uma execução anterior sem nova evidência.
+                if col == 16 and not valor and cel.value not in ('', None):
+                    continue
                 if cel.value != valor:
                     cel.value = valor
                     quantidade_status += 1
