@@ -5,6 +5,8 @@ on:
     branches: [main]
     paths:
       - 'src/**'
+      - 'scripts/**'
+      - 'README.md'
       - 'tests/**'
       - 'requirements-build.txt'
       - 'compilar_windows.ps1'
@@ -28,8 +30,10 @@ jobs:
         run: python -m pip install -r requirements-build.txt
       - name: Executar testes unitarios e de integracao sintetica
         run: python -m unittest discover -s tests -v
+      - name: Metadados da versão e data da compilação
+        run: python scripts/preparar_compilacao.py
       - name: Gerar SISREG_Login.exe
-        run: python -m PyInstaller --noconfirm --clean --onefile --windowed --name SISREG_Login --paths src --collect-all playwright --collect-all pymupdf --collect-all openpyxl src/sisreg_login.py
+        run: python -m PyInstaller --noconfirm --clean --onefile --windowed --name SISREG_Login --paths src --version-file versao_windows.txt --collect-all playwright --collect-all pymupdf --collect-all openpyxl src/sisreg_login.py
       - name: Registrar SHA-256 do executavel
         shell: pwsh
         run: |

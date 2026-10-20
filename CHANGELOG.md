@@ -1,18 +1,25 @@
-# Alterações do RPA SISREG
+# Histórico de versões
 
-## v0.5 — Fluxo automático da preparação à identificação de CNS
+## v0.6.0 — Endurecimento, governança e rastreabilidade (19/10/2026)
 
-- Mostra a situação da leitura/indexação próximo do botão e substitui o resumo textual por cartão de conclusão.
-- Mede tempo real e fixa o cenário comparativo manual em **15 segundos por AIH** (hipótese, não ganho medido).
-- Bloqueia acesso às etapas seguintes até a anterior ficar concluída.
-- Reconhece o menu de login e dispara automaticamente a busca de **todos** os CPFs pendentes, sem checkbox de confirmação ou seleção de tamanho.
-- Mantém botões de pausa/interrupção e opção de retomar pendências para recuperação de falhas.
-- Ajusta leitura do CNS destacado em TD/FONT/B quando CPF deixa de aparecer na página após a busca; restringe gravação a identificação sem conflitos visíveis.
-- Expõe no painel os motivos quantitativos das pendências por tipo.
-- Impede desbloquear etapa 3 após lote interrompido antes da conclusão.
-- Corrige escape de novas linhas no JavaScript de captura DOM, validado em Chromium com HTML sintético local.
-- Preserva gravação com backup, original de entrada e regras conservadoras de identidade e AIH.
+- Adicionado botão discreto **ⓘ Sobre** com finalidade, demanda, dados tratados e responsabilidade humana.
+- Preservadas as três etapas e a navegação do RPA. Sem nova confirmação operacional.
+- Originais XLSX/PDF somente leitura; enriquecimentos gravados em **cópia de trabalho automática** no mesmo diretório institucional.
+- Implementado histórico local administrativo com UUID, início/fim, hashes das fontes, versão, contagens e duração. Eventos com vocabulário fechado, sem dados individuais.
+- Mensagens de erro técnico da interface tornadas genéricas, sem caminhos, login, senha ou payload das páginas.
+- Limpeza seletiva dos XLSX temporários e snapshots JSON interrompidos (somente prefixos próprios, mais de 48h). `finally` já fazia a limpeza normal de XLSX.
+- Exportação opcional do relatório mínimo de pendências na terceira etapa.
+- Normalização da classificação automatizada `DADOS_COLETADOS_SEM_DIVERGENCIA`, sem atribuir atesto ou aprovação fiscal.
+- Centralizada `APP_VERSION=0.6.0` com data compilação gerada no build e metadados de versão Windows.
+- Novo módulo `governanca.py`, `app_info.py`, script de build, testes sintéticos e documentação.
+- Não há integração com serviços externos além das consultas institucionais existentes.
 
-## v0.4 — Consulta hospitalar em lote
+### Atenção
 
-- Pesquisa solicitação pela AIH exata e registra caráter, autorizador e código de procedimento sem substituir conflitos.
+- Mudança no arquivo de saída: **a fonte recebida não é mais modificada**. O trabalho vai para `*_RPA_conferencia_*.xlsx`, selecionado automaticamente.
+- O projeto continua em homologação. Login real e seletores hospitalares dependem de teste autorizado.
+- A proteção local depende de controles da TI, pasta institucional, integridade do Windows e autorização administrativa.
+
+## v0.5.0 — Interface e CNS em lote
+
+- Preparação, pesquisa cadastral sequencial e terceira etapa hospitalar preservadas na v0.6.0.

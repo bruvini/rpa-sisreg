@@ -59,6 +59,7 @@ class Registro:
 class SessaoPlanilha:
     def __init__(self) -> None:
         self.origem: Path | None = None
+        self.fonte_original: Path | None = None
         self.registros: list[Registro] = []
         self.diagnosticos: list[str] = []
         self.hash_planilha = ''
@@ -105,9 +106,33 @@ class SessaoPlanilha:
         finally:
             wb.close()
         self.origem = p
+        self.fonte_original = None
         self.hash_planilha = hashlib.sha256(p.read_bytes()).hexdigest()
         self.hash_pdf = ''
         return len(self.registros)
+
+    def preparar_copia_de_trabalho(self) -> Path:
+        """Não modifica a fonte selecionada; a cópia é automática, sem nova etapa."""
+        import shutil
+        import uuid
+        from persistencia import sha256
+        if not self.origem:
+            raise ValueError('Nenhum arquivo de origem carregado.')
+        if self.fonte_original:
+            return self.origem
+        entrada = Path(self.origem)
+        if sha256(entrada) != self.hash_planilha:
+            raise ValueError('A planilha de entrada mudou após sua leitura. Recarregue o arquivo.')
+        destino = entrada.with_name(
+            entrada.stem + '_RPA_conferencia_' + datetime.now().strftime('%Y%m%d_%H%M%S_')
+            + uuid.uuid4().hex[:6] + entrada.suffix)
+        shutil.copy2(entrada, destino)
+        if sha256(destino) != self.hash_planilha:
+            destino.unlink(missing_ok=True)
+            raise ValueError('Cópia de trabalho inválida; planilha de entrada preservada.')
+        self.fonte_original = entrada
+        self.origem = destino
+        return destino
 
     def complementar_pdf(self, index: dict[str, list[Espelho]], caminho_pdf: str | Path) -> dict[str, int]:
         if not self.origem:
@@ -189,7 +214,7 @@ class SessaoPlanilha:
             registro.autorizador = resultado.autorizador
         registro.situacao = ('PENDENTE_PROCEDIMENTO_DIVERGENTE'
                              if resultado.situacao == 'PROCEDIMENTO_DIVERGENTE'
-                             else 'SOLICITACAO_HOSPITALAR_CONFERIDA')
+                             else 'DADOS_COLETADOS_SEM_DIVERGENCIA')
         registro.revisado = True
 
     def confirmar_cns_manual(self, registro: Registro, cns: str, identidade_confirmada: bool) -> None:

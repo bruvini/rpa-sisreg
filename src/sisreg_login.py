@@ -23,6 +23,8 @@ import threading
 import tkinter as tk
 from tkinter import ttk
 from urllib.parse import urlparse
+from app_info import APP_VERSION, rotulo_versao
+from governanca import HistoricoExecucao, exportar_pendencias, limpeza_temporarios
 
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
 
@@ -34,7 +36,7 @@ XPATH_USUARIO = "/html/body/div[1]/div/div[4]/form/div/div[1]/div[1]/div[2]/inpu
 XPATH_SENHA = "/html/body/div[1]/div/div[4]/form/div/div[1]/div[1]/div[5]/input"
 XPATH_ENTRAR = "/html/body/div[1]/div/div[4]/form/div/div[1]/div[1]/div[8]/input"
 
-VERSAO = "0.5.0 — preparação, CNS em lote e auditoria hospitalar"
+VERSAO = APP_VERSION
 MANUAL_SEGUNDOS_POR_AIH = 15
 AZUL = "#063c68"
 FUNDO = "#f2f6fa"
@@ -116,7 +118,7 @@ class Aplicativo:
 
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
-        root.title('RPA SISREG · Conferência em lote — v0.5')
+        root.title(f'RPA SISREG · Conferência em lote — v{APP_VERSION}')
         root.geometry('1080x750')
         root.minsize(900,640)
         root.configure(bg=FUNDO)
@@ -127,6 +129,8 @@ class Aplicativo:
         self.pausa=threading.Event()
         self.thread_navegador=None
         self.sessao=SessaoPlanilha()
+        self.historico = None
+        self.ultima_fonte = None
         self.arquivo_planilha=None
         self.arquivo_pdf=None
         self.carregando=False
@@ -169,15 +173,17 @@ class Aplicativo:
         topo=tk.Frame(self.root,bg=AZUL,height=77);topo.pack(fill='x');topo.pack_propagate(False)
         tk.Label(topo,text='RPA SISREG  |  Conferência em lote',bg=AZUL,fg='white',
                  font=('Segoe UI',17,'bold')).pack(anchor='w',padx=24,pady=(10,0))
-        tk.Label(topo,text='v0.5 · CPF, CNS e solicitação hospitalar · atualiza XLSX com backup',
+        tk.Label(topo,text=f'v{APP_VERSION} · CPF, CNS e solicitação hospitalar · cópia de trabalho automática',
                  bg=AZUL,fg='#d4e8f7',font=('Segoe UI',10)).pack(anchor='w',padx=24)
+        tk.Button(topo, text='ⓘ Sobre', command=self._sobre, bg='#174f79', fg='white',
+                  borderwidth=0, cursor='hand2', font=('Segoe UI',10)).place(relx=0.985, y=22, anchor='ne')
         corpo=ttk.Frame(self.root,padding=13);corpo.pack(fill='both',expand=True)
         self.abas=ttk.Notebook(corpo);self.abas.pack(fill='both',expand=True)
         a=ttk.Frame(self.abas,padding=12);b=ttk.Frame(self.abas,padding=12);c=ttk.Frame(self.abas,padding=12)
         self.abas.add(a,text='  1  Planilha e PDF  ')
         self.abas.add(b,text='  2  Pesquisa em lote SISREG  ')
         self.abas.add(c,text='  3  Solicitações hospitalares  ')
-        ttk.Label(a,text='Os CPFs do PDF são gravados diretamente na planilha. Um backup é criado antes da primeira alteração.',
+        ttk.Label(a,text='A planilha recebida é preservada; os dados são gravados automaticamente numa cópia de trabalho.',
                   wraplength=950,font=('Segoe UI',10,'bold')).pack(anchor='w',pady=(0,10))
         seletores=ttk.Frame(a);seletores.pack(fill='x',pady=(0,8))
         for col in (0,1): seletores.columnconfigure(col,weight=1)
@@ -270,22 +276,31 @@ class Aplicativo:
         ttk.Label(c,textvariable=self.progresso_hospital,font=('Segoe UI',11,'bold')).pack(anchor='w',pady=(18,9))
         self.barra_hospital=ttk.Progressbar(c,mode='determinate',maximum=100,value=0)
         self.barra_hospital.pack(fill='x')
-        ttk.Label(c,text='O tempo medido é real. A estimativa manual usa 15 segundos por AIH como premissa fixa '
+        ttk.Button(c,text='Exportar somente pendências (XLSX)',command=self._exportar_pendencias).pack(anchor='w',pady=(13,0))
+        ttk.Label(c,text='Conferência automatizada ≠ análise fiscal concluída. O tempo medido é real. A estimativa manual usa 15 segundos por AIH como premissa fixa '
                   'e não comprova economia de trabalho. Não são alteradas '
                   'solicitações no SISREG. Feche o Excel durante os lotes.',wraplength=920).pack(anchor='w',pady=(14,0))
         rodape=ttk.Frame(corpo);rodape.pack(fill='x',pady=(10,0))
-        ttk.Label(rodape,textvariable=self.status,wraplength=910).pack(side='left',fill='x',expand=True)
+        ttk.Label(rodape,text=f'v{APP_VERSION}  ·  A automação identifica dados; o atesto é decisão do fiscal.',
+                  foreground='#4c6375').pack(side='left',padx=(0,10))
+        ttk.Label(rodape,textvariable=self.status,wraplength=700).pack(side='left',fill='x',expand=True)
         ttk.Button(rodape,text='Encerrar',command=self.encerrar).pack(side='right')
 
     def _escolher_xlsx(self):
         arq=filedialog.askopenfilename(title='Planilha-padrão',filetypes=[('Excel','*.xlsx')])
         if arq:
+            if self.carregando or self.processando:
+                return
             self._invalidar_preparo()
             self.arquivo_planilha=Path(arq)
+            # Só temporários com prefixo exclusivo e idade >=48h. Nunca originais.
+            limpeza_temporarios(self.arquivo_planilha.parent)
             self.lbl_xlsx.configure(text=self.arquivo_planilha.name)
     def _escolher_pdf(self):
         arq=filedialog.askopenfilename(title='Espelho de AIH',filetypes=[('PDF','*.pdf')])
         if arq:
+            if self.carregando or self.processando:
+                return
             self._invalidar_preparo()
             self.arquivo_pdf=Path(arq)
             self.lbl_pdf.configure(text=self.arquivo_pdf.name)
@@ -309,7 +324,18 @@ class Aplicativo:
         self.cartao_resultado.pack_forget()
         self.carregando=True;self.inicio_preparo=time.perf_counter();self._atualizar_relogio();self.btn_preparar.configure(state='disabled')
         self.atividade_preparo.set('Lendo planilha, indexando PDF e criando backup...')
-        self.status.set('Conferência em andamento. Não abra o Excel.')
+        self.status.set('Preparação em andamento; a fonte recebida não será modificada.')
+        try:
+            if self.historico and not self.historico.termino:
+                self.historico.encerrar('INTERROMPIDA')
+            self.historico=HistoricoExecucao()
+            self.historico.fonte(self.arquivo_planilha, tipo='xlsx')
+            if self.arquivo_pdf:
+                self.historico.fonte(self.arquivo_pdf, tipo='pdf')
+        except OSError:
+            # Uma indisponibilidade de histórico não deve mascarar a execução.
+            self.historico=None
+            self.status.set('Histórico local indisponível. Avise a TI antes de uso oficial.')
         def tarefa():
             try:
                 sessao=SessaoPlanilha()
@@ -320,10 +346,12 @@ class Aplicativo:
                     sessao.complementar_pdf(ix,self.arquivo_pdf)
                     informacao=f'{len(ix)} AIHs indexadas no espelho.'
                     if avisos: informacao+=' Estrutura do PDF requer revisão.'
+                trabalho=sessao.preparar_copia_de_trabalho()
                 gravacao=sessao.salvar_na_planilha(motivo='pdf')
+                self.eventos.put(('historico_preparacao', len(sessao.registros)))
                 self.eventos.put(('preparado',(sessao,informacao,gravacao,time.perf_counter()-self.inicio_preparo)))
             except Exception as e:
-                self.eventos.put(('erro_preparo',str(e)))
+                self.eventos.put(('erro_preparo',type(e).__name__))
         threading.Thread(target=tarefa,daemon=True).start()
 
     def _atualizar_relogio(self):
@@ -430,7 +458,7 @@ class Aplicativo:
                         except Exception as exc:
                             cns,motivo=None,'FALHA_DE_NAVEGACAO_OU_TEMPO'
                             erros_seguidos+=1
-                            self.eventos.put(('diagnostico_navegacao',type(exc).__name__ + ': ' + str(exc)[:180]))
+                            self.eventos.put(('diagnostico_navegacao', type(exc).__name__))
                         self.eventos.put(('lote_item',(idx,cns,motivo,j,len(indices))))
                         processados=j
                         if erros_seguidos>=3:
@@ -499,6 +527,7 @@ class Aplicativo:
     def _interromper(self):
         # Interrompe o processo e encerra o navegador, evitando pesquisas sem supervisão.
         self.parar.set();self.pausa.clear()
+        self._evento_seguro('INTERRUPCAO','geral')
         self.status.set('Solicitada interrupção; os resultados recebidos serão salvos.')
 
     def _salvar_checkpoint(self):
@@ -509,7 +538,8 @@ class Aplicativo:
             self.persistencia_falhou=True
             self.parar.set()
             self.pausa.clear()
-            self.status.set('FALHA DE SALVAMENTO: '+str(e)+'. A execução foi interrompida; não feche antes de recuperar os resultados.')
+            self.status.set('Não foi possível gravar a planilha de trabalho. Feche o Excel e tente novamente; a execução foi interrompida.')
+            self._evento_seguro('FALHA_SALVAMENTO', 'geral')
             return False
 
     def _tentar_salvar(self):
@@ -527,21 +557,33 @@ class Aplicativo:
                     self._atualizar_tabela()
                     self.cronometro.set('Tempo: '+self._duracao(segundos))
                     manual=len(sessao.registros)*MANUAL_SEGUNDOS_POR_AIH
-                    self.resultado_titulo.set(f'✓ Conferência concluída — {len(sessao.registros)} AIHs em {self._duracao(segundos)}')
+                    self.resultado_titulo.set(f'✓ Extração automática concluída — {len(sessao.registros)} AIHs em {self._duracao(segundos)}')
                     self.resultado_descritivo.set(
                         f'{atualizacao["cpf"]} CPF(s) gravados · {informacao}  |  '
                         f'Manual estimado: {self._duracao(manual)} (15 s/AIH, hipótese fixa). '
-                        f'Diferença estimada: {self._duracao(max(0,manual-segundos))}. Backup criado/preservado.')
+                        f'Diferença estimada: {self._duracao(max(0,manual-segundos))}. '
+                        f'Cópia de trabalho: {sessao.origem.name}. Arquivo recebido preservado.')
                     self.cartao_resultado.pack(fill='x',pady=(0,8),before=self.grade)
                     self.atividade_preparo.set('Concluído. Arquivo hospitalar atualizado.')
                     self.preparo_concluido=True
                     self.abas.tab(1,state='normal')
-                    self.status.set('Etapa 1 concluída. Agora pode acessar o SISREG.')
+                    self.status.set('Etapa 1: dados extraídos na cópia de trabalho. Agora pode acessar o SISREG.')
                     self.carregando=False;self.btn_preparar.configure(state='normal')
                 elif evento=='erro_preparo':
                     self.carregando=False;self.btn_preparar.configure(state='normal')
                     self.atividade_preparo.set('Falha na preparação; verifique o erro e tente novamente.')
-                    self.status.set('Preparação não concluída: '+str(dado))
+                    self.status.set('Preparação não concluída (' + str(dado) + '). Verifique o modelo e o PDF; nenhum dado foi enviado externamente.')
+                    self._evento_seguro('PREPARO_ERRO','preparo')
+                    if self.historico: 
+                        try:self.historico.encerrar('FALHA_TECNICA')
+                        except OSError:pass
+                elif evento=='historico_preparacao':
+                    if self.historico:
+                        try:
+                            self.historico.atualizar(registros=dado, preparados=dado)
+                            self.historico.evento('PREPARO_OK', 'preparo')
+                        except OSError:
+                            self.status.set('Histórico local não pôde ser atualizado; avise a TI.')
                 elif evento=='login_enviado':
                     self.status.set('Login enviado; aguardando o menu autenticado para iniciar o lote automaticamente.')
                 elif evento=='autenticado':
@@ -554,6 +596,7 @@ class Aplicativo:
                     idx,resultado,duracao,contador,total=dado
                     reg=self.sessao.registros[idx]
                     self.sessao.registrar_hospital(reg,resultado,duracao)
+                    self._evento_seguro('HOSPITAL_OK' if resultado.situacao == 'FICHA_CONFERIDA' else 'HOSPITAL_PENDENCIA', 'hospital', contador)
                     if contador%15==0: self._salvar_checkpoint()
                     if self.tabela.exists(str(idx)):
                         self.tabela.item(str(idx),values=(reg.aba,reg.linha,reg.aih,reg.nome,reg.cpf,reg.cns,reg.situacao))
@@ -563,12 +606,13 @@ class Aplicativo:
                 elif evento=='hospital_fim':
                     self._salvar_checkpoint()
                     self.processando=False;self.btn_hospital.configure(state='normal')
+                    self._resumir_historico()
                     if self.persistencia_falhou:
                         self.status.set('FALHA de salvamento da etapa 3; não feche antes de recuperar os resultados.')
                     elif self.navegacao_falhou:
                         self.status.set('Etapa 3 suspensa por falhas consecutivas. Dados anteriores foram preservados.')
                     else:
-                        self.status.set('Etapa 3 encerrada: conferências verificáveis salvas. Confira as pendências.')
+                        self.status.set('Etapa 3: coleta automatizada encerrada. A análise fiscal das exceções permanece pendente.')
                 elif evento=='hospital_alerta':
                     self.navegacao_falhou=True
                     self.status.set(str(dado))
@@ -578,6 +622,7 @@ class Aplicativo:
                     idx,cns,motivo,contador,total=dado
                     reg=self.sessao.registros[idx]
                     self.sessao.registrar_cadastro_em_lote(reg,cns,motivo)
+                    self._evento_seguro('CADASTRO_OK' if reg.situacao == 'CNS_CONFIRMADO_SISREG' else 'CADASTRO_PENDENCIA','cadastro',contador)
                     self.motivos_cadastro[motivo]=self.motivos_cadastro.get(motivo,0)+1
                     if reg.situacao=='CNS_CONFIRMADO_SISREG':self.dados_atuais['cns']+=1
                     else:self.dados_atuais['pendentes']+=1
@@ -599,6 +644,7 @@ class Aplicativo:
                     processados,previstos=dado
                     self._salvar_checkpoint()
                     self.processando=False;self.btn_lote.configure(state='normal')
+                    self._resumir_historico()
                     if not self.persistencia_falhou and not self.navegacao_falhou and processados==previstos and not self.parar.is_set():
                         self.cadastro_concluido=True
                         self.abas.tab(2,state='normal')
@@ -613,7 +659,7 @@ class Aplicativo:
                     self.navegacao_falhou=True
                     self.status.set(str(dado))
                 elif evento=='diagnostico_navegacao':
-                    self.status.set('Pesquisa SISREG pendente: '+str(dado))
+                    self.status.set('Pesquisa SISREG não concluída (' + str(dado)[:48] + '). Registro encaminhado para pendências.')
                 elif evento=='erro_login':self.status.set(str(dado))
                 elif evento=='navegador_parou':
                     self.browser_ready=False
@@ -621,8 +667,61 @@ class Aplicativo:
                         self._salvar_checkpoint()
                         self.processando=False;self.btn_lote.configure(state='normal')
                         self.btn_hospital.configure(state='normal')
+                        self._resumir_historico()
         except queue.Empty:pass
         self.root.after(140,self._ler_eventos)
+
+    def _evento_seguro(self, evento, etapa='geral', indice=None):
+        try:
+            if self.historico:
+                self.historico.evento(evento, etapa, indice)
+        except OSError:
+            pass  # Falha de log não bloqueia conferência; nenhuma informação livre é registrada.
+
+    def _resumir_historico(self):
+        if not self.historico:return
+        regs=self.sessao.registros
+        positivos=sum(r.situacao in ('SOLICITACAO_HOSPITALAR_CONFERIDA','DADOS_COLETADOS_SEM_DIVERGENCIA') for r in regs)
+        cns=sum(r.situacao=='CNS_CONFIRMADO_SISREG' or bool(r.cns) for r in regs)
+        consultas=sum(bool(r.consulta_hospitalar) for r in regs)
+        pendencias=sum(bool(r.situacao) and (r.situacao.startswith('PENDENTE_') or 'AUSENTE' in r.situacao or
+                         'DIVERGENTE' in r.situacao or 'CONFLITO' in r.situacao) for r in regs)
+        try:
+            self.historico.atualizar(cns_identificados=cns,consultas_hospitalares=consultas,
+                sem_divergencia_identificada=positivos,pendencias=pendencias,
+                erros_tecnicos=self.dados_atuais.get('falhas',0))
+        except (OSError,ValueError):pass
+
+    def _exportar_pendencias(self):
+        if not self.preparo_concluido:
+            self.status.set('Prepare a conferência antes de exportar pendências.');return
+        destino=filedialog.asksaveasfilename(title='Exportar somente pendências',defaultextension='.xlsx',
+             filetypes=[('Planilha Excel','*.xlsx')],initialfile='Pendencias_RPA_SISREG.xlsx')
+        if not destino:return
+        try:
+            n=exportar_pendencias(self.sessao,Path(destino))
+            self.status.set(f'Relatório mínimo de pendências gerado: {n} registros. Análise fiscal pendente.')
+        except (OSError,ValueError) as exc:
+            self.status.set('Não foi possível exportar as pendências. Escolha outra pasta/nome e tente novamente.')
+
+    def _sobre(self):
+        janela=tk.Toplevel(self.root)
+        janela.title('Sobre a ferramenta — RPA SISREG')
+        janela.geometry('650x550');janela.minsize(620,520)
+        janela.transient(self.root)
+        frame=ttk.Frame(janela,padding=18);frame.pack(fill='both',expand=True)
+        ttk.Label(frame,text='RPA SISREG · Sobre a ferramenta',font=('Segoe UI',15,'bold')).pack(anchor='w')
+        ttk.Label(frame,text=rotulo_versao(),foreground='#52677a').pack(anchor='w',pady=(2,12))
+        blocos=[
+          ('Origem da demanda','Desenvolvida a partir de demanda da equipe de fiscalização contratual, diante do alto volume de conferências manuais de internações.'),
+          ('Processo apoiado','Apoia a conferência das internações informadas pelo prestador, automatizando extração de espelhos e consultas ao SISREG.'),
+          ('Dados utilizados','Nome, AIH, CPF, CNS, procedimento e dados administrativos estritamente necessários à conferência.'),
+          ('Proteção e rastreabilidade','Os dados de pacientes permanecem nos arquivos institucionais locais. Credenciais não são salvas. Histórico técnico reúne horários, quantidades, versão e hashes, sem dados individuais.'),
+          ('Responsabilidade do fiscal','Esta ferramenta é um recurso de apoio à conferência. A identificação automática de dados não substitui a análise do fiscal. Divergências, inconsistências e decisões relacionadas ao atesto permanecem sob análise humana.')]
+        for titulo,conteudo in blocos:
+            ttk.Label(frame,text=titulo,font=('Segoe UI',10,'bold')).pack(anchor='w',pady=(7,1))
+            ttk.Label(frame,text=conteudo,wraplength=560,justify='left').pack(anchor='w')
+        ttk.Button(frame,text='Fechar',command=janela.destroy).pack(anchor='e',pady=(10,0))
 
     def encerrar(self):
         self.parar.set();self.pausa.clear();self.usuario.set('');self.senha.set('')
@@ -632,15 +731,35 @@ class Aplicativo:
             if not messagebox.askyesno('Alterações não salvas',
                   'Há resultados ainda não gravados na planilha. Deseja sair e descartá-los?'):
                 return
-        if self.processando:
-            self.status.set('Interrompendo; aguarde o salvamento dos dados do lote...')
-            self.root.after(500,self._aguardar_encerramento)
+        if self.processando or (self.thread_navegador and self.thread_navegador.is_alive()):
+            self.status.set('Encerrando a sessão SISREG e concluindo eventuais salvamentos...')
+            self._prazo_fechamento = time.monotonic() + 15
+            self.root.after(250,self._aguardar_encerramento)
         else:
-            self.root.destroy()
+            self._fechar_aplicacao()
+
+    def _fechar_aplicacao(self):
+        try:
+            self._resumir_historico()
+            if self.historico and not self.historico.termino:
+                self.historico.encerrar('INTERRUPCAO' if self.parar.is_set() and
+                        self.navegacao_falhou else 'CONCLUIDA' if self.preparo_concluido else 'INTERROMPIDA')
+        except (OSError,ValueError):pass
+        self.usuario.set('');self.senha.set('')
+        self.root.destroy()
 
     def _aguardar_encerramento(self):
-        if self.processando:self.root.after(500,self._aguardar_encerramento)
-        else:self.root.destroy()
+        ativo = self.processando or bool(self.thread_navegador and self.thread_navegador.is_alive())
+        if ativo and time.monotonic() < self._prazo_fechamento:
+            self.root.after(250,self._aguardar_encerramento)
+        elif ativo:
+            # Não encerra abruptamente com salvamento ainda ativo: é melhor
+            # manter a janela aberta e permitir recuperação pela operadora.
+            self.status.set('Encerramento demorando. Aguarde terminar a gravação/fechamento do navegador.')
+            self._prazo_fechamento = time.monotonic() + 15
+            self.root.after(500,self._aguardar_encerramento)
+        else:
+            self._fechar_aplicacao()
 
 
 def main():

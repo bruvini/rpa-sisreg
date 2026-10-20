@@ -104,7 +104,7 @@ def gravar_na_origem(sessao, *, motivo='preparacao', backup=True) -> dict:
             if sha256(origem) != sessao.hash_planilha:
                 raise AlteracaoExterna('A planilha foi modificada enquanto o RPA a preparava.')
             copia_backup = origem.with_name(origem.stem + '.backup_antes_RPA.xlsx')
-            if backup and not copia_backup.exists():
+            if backup and not getattr(sessao, "fonte_original", None) and not copia_backup.exists():
                 # A primeira versão do arquivo permanece recuperável.
                 shutil.copy2(origem,copia_backup)
             os.replace(temporario,origem)

@@ -10,3 +10,11 @@ build/
 *.xlsx
 !tests/fixtures/hospital_sintetico.xlsx
 !tests/fixtures/espelho_sintetico.pdf
+
+# Metadados temporarios do builder, historico operacional e copias de trabalho
+src/build_info.py
+versao_windows.txt
+*.jsonl
+execucao_*.json
+*.tmp
+*_RPA_conferencia_*.xlsx
