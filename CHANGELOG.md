@@ -69,3 +69,5 @@
 - Incorpora cabeçalho SISREG PNG otimizado e ícone ICO ao EXE no workflow GitHub Actions.
 - Preserva importação, indexação PDF, pesquisa CPF→CNS, busca de AIH, pausa e gravacão transacional de planilha.
 - Acrescenta testes sintéticos da coluna P, campo autorizado e sanitização dos logs.
+
+- Ajuste de compatibilidade: campo G preexistente não representa conflito sem código autorizador independente do SISREG.

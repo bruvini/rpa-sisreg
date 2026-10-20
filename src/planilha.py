@@ -221,7 +221,9 @@ class SessaoPlanilha:
         conflitos = []
         if registro.carater and registro.carater.zfill(2) != resultado.carater:
             conflitos.append('CARATER_CONFLITANTE')
-        if registro.autorizador and registro.autorizador != resultado.autorizador:
+        # Comparar autorizador somente quando as DUAS fontes o informam.
+        # O Código Solicitação da ficha é outro campo, não autorização.
+        if resultado.autorizador and registro.autorizador and registro.autorizador != resultado.autorizador:
             conflitos.append('AUTORIZADOR_CONFLITANTE')
         if conflitos:
             registro.situacao = 'PENDENTE_' + '_'.join(conflitos)

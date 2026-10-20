@@ -30,3 +30,5 @@
 - O campo `codigoAutorizador` não será inferido de `Código Solicitação`. Uma fonte independente é necessária.
 - Logs em memória são incluídos no TXT no encerramento normal ou parcial; queda abrupta pode perder o diagnóstico não persistido. Eventos administrativos permitidos continuam no histórico local.
 - A estimativa de tempo manual é hipotética e não comprova produtividade/economia.
+
+**Atenção ao histórico:** versões anteriores podem ter gravado o Código Solicitação em `codigoAutorizador` (G). O robô atual não altera nem valida esses valores; revise sua procedência nos arquivos já processados.

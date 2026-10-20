@@ -37,6 +37,7 @@ class TesteSolicitacao(unittest.TestCase):
         s.registrar_hospital(r,ResultadoHospital('FICHA_CONFERIDA','AIH específica','10','',r.procedimento,'670478410'),1.0)
         self.assertEqual(r.solicitacao,'670478410')
         self.assertEqual(r.autorizador,'AUTORIZADOR_EXISTENTE')
+        self.assertEqual(r.situacao,'DADOS_COLETADOS_SEM_DIVERGENCIA')
     def test_coluna_de_auditoria_exclusiva(self):
         self.assertEqual(COLUNAS_AUDITORIA[-1], 'rpaNumeroSolicitacao')
         self.assertEqual(len(COLUNAS_AUDITORIA),9)
