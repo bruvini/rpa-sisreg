@@ -8,4 +8,4 @@ python -m PyInstaller --noconfirm --clean --onefile --windowed --name SISREG_Log
 if (-not (Test-Path dist/SISREG_Login.exe)) { throw 'EXE nao gerado.' }
 $sha = (Get-FileHash dist/SISREG_Login.exe -Algorithm SHA256).Hash
 "SISREG_Login.exe SHA256: $sha" | Out-File -FilePath dist/SHA256.txt -Encoding utf8
-Write-Host "Executavel v0.7.1: dist/SISREG_Login.exe"
+Write-Host "Executavel v0.7.2: dist/SISREG_Login.exe"

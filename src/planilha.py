@@ -18,10 +18,7 @@ from aih_extract import (
 ABAS = ('POA CIRURGICO', 'PT6', 'ALTA COMPLEXIDADE')
 COLUNAS = ('nomePaciente', 'numeroAIH', 'numeroProcedimento', 'numeroCPF',
            'numeroCNS', 'caraterInternacao', 'codigoAutorizador')
-COLUNAS_ADICIONAIS = ('rpaSituacao', 'rpaDetalhe', 'rpaOrigemPDF',
-                      'rpaConsultaAmbulatorial', 'rpaAtualizadoEm',
-                      'rpaConsultaHospitalar', 'rpaProcedimentoSISREG',
-                      'rpaTempoConsultaSegundos', 'rpaNumeroSolicitacao')
+from saida_xlsx import CAMPOS_FINAIS as COLUNAS_ADICIONAIS
 
 
 def valor_texto(valor: Any) -> str:
@@ -267,36 +264,16 @@ class SessaoPlanilha:
         destino = Path(destino)
         if destino.resolve() == self.origem.resolve():
             raise ValueError('Não é permitido substituir a planilha original.')
-        wb = load_workbook(self.origem, keep_links=False)
-        try:
-            for aba in ABAS:
-                ws = wb[aba]
-                for i, cab in enumerate(COLUNAS_ADICIONAIS, 8):
-                    ws.cell(1, i, cab)
-                ws.freeze_panes = 'A2'
-                ws.auto_filter.ref = f'A1:O{max(ws.max_row, 2)}'
-            for r in self.registros:
-                ws = wb[r.aba]
-                # Sobrescritas SOMENTE de campos vazios já confirmados.
-                if not r.cpf_origem and r.cpf:
-                    ws.cell(r.linha, 4, r.cpf).number_format = '@'
-                if not r.cns_origem and r.cns:
-                    ws.cell(r.linha, 5, r.cns).number_format = '@'
-                if not r.carater and not r.autorizador:
-                    pass
-                if r.carater and not ws.cell(r.linha,6).value:
-                    ws.cell(r.linha,6,r.carater).number_format='@'
-                if r.autorizador and not ws.cell(r.linha,7).value:
-                    ws.cell(r.linha,7,r.autorizador).number_format='@'
-                campos = (r.situacao, r.detalhe, r.origem_pdf,
-                          r.consulta_ambulatorial, r.atualizado_em, r.consulta_hospitalar,
-                          r.procedimento_sisreg, str(r.tempo_consulta))
-                for c, texto in enumerate(campos, 8):
-                    celula = ws.cell(r.linha, c)
-                    # Escrever como texto, nunca fórmula proveniente dos dados.
-                    celula.value = "'" + texto if texto.startswith(('=', '+', '-', '@')) else texto
-            destino.parent.mkdir(parents=True, exist_ok=True)
-            wb.save(destino)
-        finally:
-            wb.close()
+        # Usa a mesma política e layout do salvamento periódico.
+        from persistencia import gravar_na_origem
+        # Exportação explícita preserva fonte; delega à rotina de planilha.
+        import shutil
+        shutil.copy2(self.origem, destino)
+        sessao_aux=type('SessaoDeCopia', (), {})()
+        sessao_aux.origem=destino
+        sessao_aux.fonte_original=self.fonte_original
+        sessao_aux.registros=self.registros
+        from persistencia import sha256
+        sessao_aux.hash_planilha=sha256(destino)
+        gravar_na_origem(sessao_aux, motivo='copia', backup=False)
         return destino

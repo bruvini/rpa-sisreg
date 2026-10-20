@@ -1,3 +1,17 @@
+## 0.7.2 — Entrega XLSX simplificada e ícone legível (20/10/2026)
+
+- Mantidos os sete campos originais; exportação passa a ter quatro campos H:K, em vez de nove H:P.
+- `rpaSituacao`: classificação legível de ponta a ponta; não declara atesto fiscal.
+- `rpaAtualizadoEm`: data real do Excel formatada como `DD/MM/AAAA HH:MM:SS`.
+- `rpaProcedimentoSISREG`: `Compatível`, `Divergente` ou `Não conferido`.
+- `rpaNumeroSolicitacao`: código obtido da ficha hospitalar exata.
+- G pode receber, quando vazia, o Código Solicitação da ficha, por regra operacional expressamente solicitada; comentários esclarecem que isso não comprova autorização independente. G preexistente é preservada.
+- Aplicadas cores discretas, fonte, larguras, linhas, filtros e Tabelas A:K no modelo Excel.
+- Migração defensiva das nove colunas antigas, sem sobrescrever cabeçalhos desconhecidos.
+- Ícone multi-resolução refeito com recorte ampliado da identidade original; cabeçalho PNG permanece.
+- Motor SISREG, consultas, critérios de identidade, logs sem PII e sequência das quatro abas preservados.
+- Testes locais: 142/142 aprovados, inclusive GUI/DOM sintéticos em ambiente gráfico.
+
 # v0.6.2 — CNS da ficha identificada e apresentação
 
 - Consulta do CNS direcionada ao XPath cadastral `#main_div`, em vez de buscar qualquer número destacado.
@@ -70,4 +84,4 @@
 - Preserva importação, indexação PDF, pesquisa CPF→CNS, busca de AIH, pausa e gravacão transacional de planilha.
 - Acrescenta testes sintéticos da coluna P, campo autorizado e sanitização dos logs.
 
-- Ajuste de compatibilidade: campo G preexistente não representa conflito sem código autorizador independente do SISREG.
+- Ajuste final de compatibilidade: valor preexistente em codigoAutorizador (G) não é tratado como conflito sem evidência independente de autorizador do SISREG.

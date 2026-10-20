@@ -29,10 +29,12 @@ class TestesVisuais(unittest.TestCase):
             cpf='11144477735',cns='900000000000001',carater='10',autorizador='00099')
         a.sessao.registros=[r]
         a._atualizar_linha_hospital(0)
-        self.assertEqual(a.tabela_hospital.item('0','values')[5],'Aguardando')
+        self.assertEqual(a.tabela_hospital.item('0','values')[5],'—')
         r.consulta_hospitalar='FICHA_CONFERIDA';r.procedimento_sisreg='0408050063';r.situacao='DADOS_COLETADOS_SEM_DIVERGENCIA'
         a._atualizar_linha_hospital(0)
-        self.assertEqual(a.tabela_hospital.item('0','values')[5],'AIH localizada na ficha')
+        self.assertEqual(a.tabela_hospital.item('0','values')[5],'—')
+        r.solicitacao='670478410';a._atualizar_linha_hospital(0)
+        self.assertEqual(a.tabela_hospital.item('0','values')[5],'670478410')
     def test_tab_estatistica_somente_apos_finalizar(self):
         self.assertEqual(self.app.abas.tab(3,'state'),'disabled')
 

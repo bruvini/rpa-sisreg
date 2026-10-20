@@ -18,7 +18,7 @@ class Pagina:
     url='https://sisregiii.saude.gov.br/cgi-bin/index'
 
 class TesteSolicitacao(unittest.TestCase):
-    def test_versao(self):self.assertEqual(APP_VERSION,'0.7.1')
+    def test_versao(self):self.assertEqual(APP_VERSION,'0.7.2')
     def test_ficha_separa_numero_solicitacao_de_autorizador(self):
         valores={
           '#fichaInternacao':'Código Solicitação 670478410; Número AIH 900000000012-3',
@@ -40,7 +40,7 @@ class TesteSolicitacao(unittest.TestCase):
         self.assertEqual(r.situacao,'DADOS_COLETADOS_SEM_DIVERGENCIA')
     def test_coluna_de_auditoria_exclusiva(self):
         self.assertEqual(COLUNAS_AUDITORIA[-1], 'rpaNumeroSolicitacao')
-        self.assertEqual(len(COLUNAS_AUDITORIA),9)
+        self.assertEqual(len(COLUNAS_AUDITORIA),4)
 
 class TesteLogSeguro(unittest.TestCase):
     def test_evento_diagnostico_sem_identificadores_livres(self):
@@ -81,8 +81,8 @@ class TesteIntegracaoNovaColuna(unittest.TestCase):
             w=load_workbook(copia,read_only=True)
             try:
                 ws=w[r.aba]
-                self.assertEqual(ws.cell(1,16).value,'rpaNumeroSolicitacao')
-                self.assertEqual(ws.cell(r.linha,16).value,'670478410')
+                self.assertEqual(ws.cell(1,11).value,'rpaNumeroSolicitacao')
+                self.assertEqual(ws.cell(r.linha,11).value,'670478410')
                 self.assertNotEqual(ws.cell(r.linha,7).value,'670478410')
             finally:w.close()
 

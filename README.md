@@ -1,4 +1,22 @@
-# RPA SISREG · Conferência de internações (v0.7.0)
+# RPA SISREG · Conferência de internações (v0.7.2)
+
+**Homologação institucional:** a automação coleta dados e evidencia pendências; a decisão sobre atesto pertence ao fiscal. As pesquisas no SISREG continuam iguais às da v0.7.1.
+
+### Atualização v0.7.2 — planilha de entrega e ícone
+
+- O XLSX conserva as sete colunas do modelo hospitalar e exporta somente **H:K**: `rpaSituacao`, `rpaAtualizadoEm`, `rpaProcedimentoSISREG` e `rpaNumeroSolicitacao`. Campos técnicos adicionais não são exportados; logs técnicos permanecem separados e sem dados pessoais.
+- **H** mostra a situação final legível, distinguindo ausência no espelho, divergência no PDF, ausência/divergência cadastral, AIH não identificada, divergência hospitalar e **Consulta sem divergências**. Casos com erro ou consulta inacabada são apresentados como revisão pendente, nunca como ausência confirmada.
+- **I** é uma data/hora real do Excel, com formato `DD/MM/AAAA HH:MM:SS`, evitando um texto ISO não formatado.
+- **J** mostra `Compatível`, `Divergente` ou `Não conferido` conforme comparação de dois códigos de procedimento de 10 dígitos. Não considera um campo vazio como conformidade.
+- **K** mantém o número da solicitação extraído da ficha após confirmação da AIH.
+- **G (`codigoAutorizador`)**: a pedido da operação, quando está vazia e há ficha exata, recebe o **Código Solicitação** da ficha como identificador operacional. Trata-se de um mapeamento solicitado, **não de prova de um código autorizador independente**. Se G já estiver preenchida, seu valor nunca é substituído. Há comentário de procedência no cabeçalho. A duplicação em G/K é intencional para compatibilidade com o modelo existente.
+- Novas colunas têm formatação, filtros, congelamento do cabeçalho e extensão das **Tabelas do Excel** do modelo original para A:K. Ao migrar esquema legado H:P, a rotina remove somente colunas reconhecidas; rejeita colunas extras desconhecidas para evitar perda de dados.
+- O novo ícone do executável utiliza um **recorte ampliado da letra S do logotipo fornecido**, para melhor leitura nos tamanhos pequenos do Explorador, com múltiplas resoluções; o logo completo permanece no cabeçalho. O Windows pode usar ícone em cache, sendo necessário reabrir o Explorer ou extrair o novo EXE em outra pasta para visualizá-lo.
+- A planilha de origem continua intacta, com escrita apenas na cópia de trabalho. Nenhum paciente real integra o repositório ou a compilação.
+
+**Como testar:** abrir o EXE compilado, usar uma planilha de homologação sem dados reais, completar as três etapas, conferir H:K e os comentários em G/K. Validar G vazia e G já preenchida, procedimento divergente, consulta incompleta, filtros e data/hora, sem alterar o código de procedimento original. O `.txt` mantém o diagnóstico técnico sem CPF/CNS/AIH completos.
+
+---
 
 **Estado:** protótipo institucional em homologação. A publicação de código não significa autorização da Regulação ou da TI para automação em produção. Não é um sistema de atesto ou decisão fiscal.
 

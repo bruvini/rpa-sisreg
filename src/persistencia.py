@@ -12,10 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from openpyxl import load_workbook
 
-COLUNAS_AUDITORIA = ('rpaSituacao', 'rpaDetalhe', 'rpaOrigemPDF',
-                   'rpaConsultaAmbulatorial', 'rpaAtualizadoEm',
-                   'rpaConsultaHospitalar', 'rpaProcedimentoSISREG',
-                   'rpaTempoConsultaSegundos', 'rpaNumeroSolicitacao')
+from saida_xlsx import CAMPOS_FINAIS as COLUNAS_AUDITORIA, adequar_colunas, escrever_linha
 
 class AlteracaoExterna(Exception):
     pass
@@ -49,12 +46,10 @@ def gravar_na_origem(sessao, *, motivo='preparacao', backup=True) -> dict:
     try:
         for aba in ('POA CIRURGICO','PT6','ALTA COMPLEXIDADE'):
             ws = wb[aba]
-            for col,cab in enumerate(COLUNAS_AUDITORIA, 8):
-                if ws.cell(1,col).value not in (None, cab):
-                    raise AlteracaoExterna(f'Coluna de auditoria ocupada em {aba}, {col}. Não sobrescrevemos.')
-                ws.cell(1,col).value = cab
-            ws.freeze_panes = 'A2'
-            ws.auto_filter.ref = f'A1:P{max(2, ws.max_row)}'
+            try:
+                adequar_colunas(ws)
+            except ValueError as exc:
+                raise AlteracaoExterna(str(exc)) from None
         for r in sessao.registros:
             ws = wb[r.aba]
             cpf = ws.cell(r.linha,4)
@@ -76,21 +71,19 @@ def gravar_na_origem(sessao, *, motivo='preparacao', backup=True) -> dict:
             if r.autorizador and autorizador.value in ('',None):
                 autorizador.value=str(r.autorizador);autorizador.number_format='@'
                 quantidade_hospital+=1
-            valores=(r.situacao, r.detalhe, r.origem_pdf,
-                     r.consulta_ambulatorial, r.atualizado_em, r.consulta_hospitalar,
-                     r.procedimento_sisreg, str(r.tempo_consulta) if r.tempo_consulta else '',
-                     r.solicitacao)
-            for col,valor in enumerate(valores,8):
-                valor = str(valor or '')
-                if valor.startswith(('=','+','-','@')):
-                    valor = "'" + valor
-                cel=ws.cell(r.linha,col)
-                # Não apagar solicitação de uma execução anterior sem nova evidência.
-                if col == 16 and not valor and cel.value not in ('', None):
-                    continue
-                if cel.value != valor:
-                    cel.value = valor
-                    quantidade_status += 1
+            # Mapeamento OPERACIONAL solicitado pela gestão: quando não existe
+            # código autorizador independente e a ficha confirmou a AIH exata,
+            # registrar em G o Código Solicitação. O cabeçalho documenta a origem;
+            # esse valor não demonstra um autorizador distinto.
+            if (autorizador.value in ('',None) and not r.autorizador
+                    and r.solicitacao and r.consulta_hospitalar in
+                    ('FICHA_CONFERIDA','PROCEDIMENTO_DIVERGENTE')):
+                autorizador.value=str(r.solicitacao)
+                autorizador.number_format='@'
+                quantidade_hospital+=1
+            # Campos de auditoria de uso final: somente os quatro solicitados.
+            escrever_linha(ws, r)
+            quantidade_status += 1
         # Cria arquivo temporário dentro do mesmo volume para os.replace ser atômico.
         fd,nome_tmp=tempfile.mkstemp(prefix='.rpa_sisreg_',suffix='.xlsx',dir=origem.parent)
         os.close(fd)
