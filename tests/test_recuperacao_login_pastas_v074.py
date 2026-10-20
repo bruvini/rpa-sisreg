@@ -24,8 +24,10 @@ class TestesPastasEPrivacidade(unittest.TestCase):
         self.assertEqual(APP_VERSION, '0.7.4')
 
     def test_exe_congelado_define_raiz_sem_meipass(self):
-        with patch.object(sys, 'frozen', True, create=True), patch.object(sys, 'executable', '/tmp/executavel/RPA_SISREG.exe'):
-            self.assertEqual(diretorio_aplicacao(), Path('/tmp/executavel'))
+        with tempfile.TemporaryDirectory() as diretorio:
+            fake = Path(diretorio)/'RPA_SISREG.exe'
+            with patch.object(sys, 'frozen', True, create=True), patch.object(sys, 'executable', str(fake)):
+                self.assertEqual(diretorio_aplicacao(), fake.resolve().parent)
 
     def test_análises_e_logs_criadas_ao_lado_exe(self):
         with tempfile.TemporaryDirectory() as d:
