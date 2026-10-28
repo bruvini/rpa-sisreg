@@ -1,3 +1,12 @@
+# v0.7.5 — Resiliência, retomada e continuidade de etapas (2026-10-28)
+
+- Preserva CNS já existentes no XLSX e prioriza pendências ainda não pesquisadas ou falhas técnicas.
+- Pendências de identidade de execução anterior permanecem para revisão humana.
+- Diagnóstico periódico da sessão, repetição limitada em falhas transitórias, e suspensão após falhas consecutivas sem gerar falsas pendências.
+- Salva resultados anteriores, libera login novo e retoma pendentes sem repetir extração da etapa 1.
+- Inicia automaticamente a consulta hospitalar após concluir a etapa 2 na mesma sessão saudável.
+- Mantém interface, credenciais apenas em memória e arquivos sensíveis somente no ambiente institucional.
+
 # v0.7.4 — Recuperação de autenticação, pastas portáteis e documentação
 
 - Login com falha deixa de manter navegador zumbi: a thread encerra o contexto e

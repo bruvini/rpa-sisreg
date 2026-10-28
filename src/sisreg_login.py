@@ -19,6 +19,7 @@ from datetime import datetime
 from sisreg_navigation import (consultar_cadastro, ler_cadastro_contexto, autenticao_ativa, NavegacaoInesperada)
 from aih_extract import ler_espelhos_pdf, cpf_valido, cns_formato
 from planilha import SessaoPlanilha
+from retomada import SaudeLote, selecionar_cadastros
 from sisreg_navigation import NavegacaoInesperada
 from sisreg_hospital import consultar_solicitacao_hospitalar, ResultadoHospital
 import threading
@@ -171,6 +172,7 @@ class Aplicativo:
         self.navegador=tk.StringVar(value='Google Chrome')
         self.preparo_concluido=False
         self.cadastro_concluido=False
+        self.revisao_anterior=0
         self.motivos_cadastro={}
         self.atividade_preparo=tk.StringVar(value='Aguardando início.')
         self.resultado_titulo=tk.StringVar(value='')
@@ -708,8 +710,19 @@ class Aplicativo:
                     if cmd!='lote':continue
                     indices=payload
                     self.eventos.put(('lote_iniciado',len(indices)))
-                    erros_seguidos=0
+                    saude=SaudeLote()
+                    provisoria=[]  # Até confirmar que a sessão continua saudável.
                     processados=0
+                    def confirmar_uma(item):
+                        nonlocal processados
+                        indice,numero,razao,ordinal,duracao,tecnico=item
+                        self.eventos.put(('diagnostico_tecnico',('CADASTRO_CPF',
+                            'OK' if numero else 'PENDENCIA',ordinal,duracao,
+                            'NENHUM' if numero else ('FALHA_NAVEGACAO' if tecnico
+                            else 'IDENTIDADE_NAO_CONFIRMADA'))))
+                        self.eventos.put(('lote_item',(indice,numero,razao,ordinal,len(indices))))
+                        processados+=1
+                    suspenso=False
                     for j,idx in enumerate(indices,1):
                         if self.parar.is_set():break
                         while self.pausa.is_set() and not self.parar.wait(0.25):pass
@@ -717,30 +730,68 @@ class Aplicativo:
                         r=self.sessao.registros[idx]
                         inicio_item=time.perf_counter()
                         identificador=r.cpf
+                        cns,motivo=None,'FALHA_DE_NAVEGACAO_OU_TEMPO'
+                        erro_tecnico=False
+                        # No máximo duas tentativas apenas para falhas de navegação.
+                        # Não repetir automaticamente uma identidade divergente.
+                        for tentativa in (1,2):
+                            if self.parar.is_set():break
+                            try:
+                                validas=[pg for pg in contexto.pages if not pg.is_closed() and endereco_oficial(pg.url)]
+                                if not validas:
+                                    raise NavegacaoInesperada('Sessão SISREG encerrada.')
+                                pagina=validas[-1]
+                                # Uma verificação periódica evita consultar centenas
+                                # de registros numa página que já perdeu a sessão.
+                                if (j==1 or j%20==0 or tentativa>1) and not autenticao_ativa(pagina,timeout=2500):
+                                    raise NavegacaoInesperada('Menu autenticado indisponível.')
+                                consultar_cadastro(pagina,identificador)
+                                cns,motivo=ler_cadastro_contexto(contexto,pagina,r.nome,identificador,espera=7500)
+                                erro_tecnico=False
+                                break
+                            except Exception as exc:
+                                erro_tecnico=True
+                                self.eventos.put(('diagnostico_navegacao', type(exc).__name__))
+                                if tentativa==1 and not self.parar.wait(2.0):
+                                    continue
+                        if self.parar.is_set():break
+                        decisao=saude.registrar(cns,erro_tecnico=erro_tecnico)
+                        if decisao.startswith('SUSPENDER_'):
+                            motivo_suspensao = ('Falhas de navegação consecutivas.' if erro_tecnico
+                                else 'Vários resultados consecutivos sem identidade confirmada.')
+                            self.eventos.put(('diagnostico_tecnico',('SESSAO_SUSPENSA','PENDENCIA',j,
+                                time.perf_counter()-inicio_item,'FALHA_NAVEGACAO' if erro_tecnico else 'IDENTIDADE_NAO_CONFIRMADA')))
+                            self.eventos.put(('lote_alerta',motivo_suspensao+
+                                ' Pesquisas suspensas; confira a sessão e faça novo login para retomar.'))
+                            suspenso=True
+                            break  # Não marca este registro como ausência de paciente.
+                        item=(idx,cns,motivo,j,time.perf_counter()-inicio_item,erro_tecnico)
+                        if cns:
+                            # A próxima consulta correta confirma a navegação; só
+                            # então consolidar os casos imediatamente anteriores.
+                            for anterior in provisoria: confirmar_uma(anterior)
+                            provisoria.clear()
+                            confirmar_uma(item)
+                        else:
+                            provisoria.append(item)
+                        # Intervalo deliberado: respeitar a operação do SISREG.
+                        self.parar.wait(1.8)
+                    if provisoria and not suspenso and not self.parar.is_set():
                         try:
                             validas=[pg for pg in contexto.pages if not pg.is_closed() and endereco_oficial(pg.url)]
-                            if not validas:raise NavegacaoInesperada('Sessão SISREG encerrada.')
-                            # Pesquisa sempre no contexto oficial; nunca cadastra nem altera solicitações.
-                            pagina=validas[-1]
-                            consultar_cadastro(pagina,identificador)
-                            cns,motivo=ler_cadastro_contexto(contexto,pagina,r.nome,identificador,espera=7500)
-                            erros_seguidos=0
-                        except Exception as exc:
-                            cns,motivo=None,'FALHA_DE_NAVEGACAO_OU_TEMPO'
-                            erros_seguidos+=1
-                            self.eventos.put(('diagnostico_navegacao', type(exc).__name__))
-                        self.eventos.put(('diagnostico_tecnico',('CADASTRO_CPF',
-                            'OK' if cns else 'PENDENCIA',j,time.perf_counter()-inicio_item,
-                            'NENHUM' if cns else ('FALHA_NAVEGACAO' if motivo=='FALHA_DE_NAVEGACAO_OU_TEMPO'
-                            else 'IDENTIDADE_NAO_CONFIRMADA'))))
-                        self.eventos.put(('lote_item',(idx,cns,motivo,j,len(indices))))
-                        processados=j
-                        if erros_seguidos>=3:
-                            self.eventos.put(('lote_alerta','Três falhas consecutivas de navegação. Lote suspenso para verificar tela/seletores.'))
-                            break
-                        # Intervalo deliberado para não sobrecarregar o sistema público.
-                        self.parar.wait(1.8)
+                            sessao_ok=bool(validas and autenticao_ativa(validas[-1],timeout=2500))
+                        except Exception:
+                            sessao_ok=False
+                        if sessao_ok:
+                            for anterior in provisoria: confirmar_uma(anterior)
+                        else:
+                            suspenso=True
+                            self.eventos.put(('lote_alerta',
+                                'Não foi possível confirmar a sessão após resultados inconclusivos. '
+                                'Faça novo login para retomar sem perder os CNS anteriores.'))
                     self.eventos.put(('lote_fim',(processados,len(indices))))
+                    if suspenso:
+                        return  # Encerra a sessão comprometida; novo login é humano.
         except Exception:
             self.eventos.put(('erro_login','Não foi possível iniciar o navegador autorizado.'))
         finally:
@@ -757,9 +808,7 @@ class Aplicativo:
         if not self.thread_navegador or not self.thread_navegador.is_alive() or not self.browser_ready:
             self.status.set('Aguarde o reconhecimento do login pelo SISREG.');return
         from aih_extract import cpf_valido
-        selecionados=[i for i,r in enumerate(self.sessao.registros) if cpf_valido(r.cpf)
-                     and r.aih and r.nome and not r.cns
-                     and r.situacao not in ('CPF_CONFLITANTE_PDF','ESPELHOS_CONFLITANTES','NOME_DIVERGENTE_ESPELHO')]
+        selecionados,self.revisao_anterior=selecionar_cadastros(self.sessao.registros)
         if not selecionados:
             self.status.set('Nenhum CPF elegível pendente. Etapa 2 concluída.')
             self.estatisticas.registrar_total('cadastro',0)
@@ -767,6 +816,8 @@ class Aplicativo:
             self.cadastro_concluido=True
             self.abas.tab(2,state='normal')
             self._atualizar_avanco()
+            self.status.set('CNS existentes preservados; iniciando consultas hospitalares automaticamente.')
+            self.root.after(200, self._iniciar_hospital)
             return
         self.inicio_cadastro=time.perf_counter()
         self.consultas_cadastro=0
@@ -781,7 +832,7 @@ class Aplicativo:
         self.barra.configure(value=0)
         self.btn_lote.configure(state='disabled')
         self.comandos.put(('lote',selecionados))
-        self.status.set(f'Lote iniciado com {len(selecionados)} pesquisas, sem interação linha a linha.')
+        self.status.set(f'Lote iniciado: {len(selecionados)} cadastros pendentes; {self.revisao_anterior} para revisão humana. A etapa hospitalar iniciará automaticamente ao concluir.')
     def _iniciar_hospital(self):
         if self.processando:
             self.status.set('Outro lote em execução; aguarde sua conclusão.');return
@@ -1024,7 +1075,10 @@ class Aplicativo:
                         self.cadastro_concluido=True
                         self.abas.tab(2,state='normal')
                         self._atualizar_avanco()
-                        self.status.set('Etapa 2 concluída: dados gravados na planilha. Etapa 3 liberada.')
+                        self.status.set('Etapa 2 concluída e salva. Iniciando consultas hospitalares na mesma sessão...')
+                        # O worker ainda está ativo: apenas enfileira nova tarefa,
+                        # sem reiniciar o login e sem clique extra na interface.
+                        self.root.after(250, self._iniciar_hospital)
                     elif self.navegacao_falhou and not self.persistencia_falhou:
                         self.status.set('Lote suspenso por falhas consecutivas do SISREG. Salvos os dados já obtidos; use Retomar quando disponível.')
                     elif self.persistencia_falhou:
@@ -1042,6 +1096,8 @@ class Aplicativo:
                     self.status.set(str(dado))
                 elif evento=='navegador_parou':
                     self.estatisticas.diagnosticar('SESSAO_ENCERRADA','OK')
+                    if self.navegacao_falhou and self.preparo_concluido:
+                        self.status.set('Sessão interrompida. Informe novamente seu login para retomar somente os CNS pendentes. A planilha foi preservada.')
                     self.browser_ready=False
                     if self.login_pendente and not self.parar.is_set():
                         self.login_pendente=False

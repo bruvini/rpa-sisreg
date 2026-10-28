@@ -33,6 +33,7 @@ manualmente em PDFs e no SISREG. O código pode ser reutilizado sob os termos de
    acessa o domínio oficial. Após menu autenticado, os CPFs são consultados em
    lote e os CNS inequívocos preenchidos no XLSX de trabalho. Uma senha incorreta
    **não exige reiniciar o RPA nem a conferência do PDF**: basta tentar novamente.
+   Quando os CNS elegíveis terminam com sessão saudável, inicia automaticamente a etapa hospitalar no mesmo navegador.
 3. **Solicitações hospitalares:** busca CNS, localiza AIH exata e consulta ficha,
    código de solicitação/autorizador, procedimento e caráter. Ambiguidades e
    diferenças exigem análise humana. Os resultados aparecem durante a execução.
@@ -43,6 +44,15 @@ manualmente em PDFs e no SISREG. O código pode ser reutilizado sob os termos de
 A planilha hospitalar de entrada e o PDF são **somente leitura**. A cópia enriquecida
 é gerada automaticamente sem apagar o original. Na estação de trabalho, mantenha
 o Excel fechado enquanto o lote é processado.
+
+## Retomada e resiliência (v0.7.5)
+
+- **Reimportação:** selecione a última cópia de `Análises/`; é produzida uma nova cópia. CPFs/CNS já preenchidos são preservados e CNS existentes não são pesquisados novamente.
+- **Priorização:** primeiro os não consultados e falhas técnicas. Casos anteriores de identidade divergente seguem para revisão humana, sem repetição automática.
+- **Sessão saudável:** verificação periódica do menu SISREG e no máximo uma repetição controlada em erro de navegação. Quatro identidades inconclusivas consecutivas ou três falhas técnicas suspendem o lote sem inventar ausência do paciente.
+- **Retomada:** resultados confirmados são salvos; nova autenticação é solicitada na mesma janela. Senha não é persistida nem reutilizada silenciosamente.
+- **Continuidade:** finalizando a pesquisa de CNS e salvando o XLSX, a etapa hospitalar inicia na mesma sessão, sem novo clique.
+- **Uso noturno:** sessão SISREG, rede e computador devem permanecer disponíveis. Expiração da autenticação, suspensão do Windows e controles institucionais podem exigir intervenção. Não contornar MFA, bloqueio de tela ou regras da TI.
 
 ## Layout da planilha enriquecida
 

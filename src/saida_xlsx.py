@@ -62,6 +62,15 @@ def situacao_final(registro) -> str:
     Uma busca que falhou tecnicamente não deve parecer ausência comprovada de AIH.
     """
     situacao = str(registro.situacao or '').upper()
+    anterior = (getattr(registro, 'situacao_anterior', '') or '').strip()
+    # Ao reabrir um XLSX da versão anterior, não converter revisão humana
+    # previamente sinalizada em 'aguardando' apenas por reindexar o PDF.
+    if (not registro.cns and anterior in {
+            'Não encontrado na consulta SISREG',
+            'Dados divergentes na consulta SISREG',
+            'Consulta não concluída — revisão necessária'}
+            and situacao in ('DOCUMENTO_PDF_LOCALIZADO', 'PRONTO_PARA_CONFERENCIA')):
+        return anterior
     if situacao in AUSENCIA_PDF or (not registro.cpf and situacao.startswith('AIH_')):
         return 'Não encontrado no espelho de AIH'
     if situacao in DIVERGENCIA_PDF:

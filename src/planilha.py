@@ -52,6 +52,7 @@ class Registro:
     procedimento_sisreg: str = ''
     tempo_consulta: float = 0.0
     solicitacao: str = ''
+    situacao_anterior: str = ''  # Texto de H da planilha anterior, sem persistência extra.
 
 
 class SessaoPlanilha:
@@ -80,14 +81,15 @@ class SessaoPlanilha:
                 cab = tuple(valor_texto(c.value) for c in ws[1][:7])
                 if cab != COLUNAS:
                     raise ValueError(f'Cabeçalhos incorretos na aba {aba}. Use o modelo padrão, linha 1.')
-                for n, linha in enumerate(ws.iter_rows(min_row=2, max_col=7, values_only=True), 2):
+                for n, linha in enumerate(ws.iter_rows(min_row=2, max_col=8, values_only=True), 2):
                     if not any(v is not None and valor_texto(v) for v in linha):
                         continue
-                    campos = [valor_texto(v) for v in linha]
+                    campos = [valor_texto(v) for v in linha[:7]]
                     aih = normalizar_aih(campos[1])
                     r = Registro(aba, n, campos[0], aih, campos[2], campos[3],
                                  campos[4], campos[5], campos[6],
-                                 cpf_origem=campos[3], cns_origem=campos[4])
+                                 cpf_origem=campos[3], cns_origem=campos[4],
+                                 situacao_anterior=valor_texto(linha[7]) if len(linha)>7 else '')
                     if not aih:
                         r.situacao = 'AIH_FORMATO_INVALIDO'
                         r.detalhe = 'AIH deve ter 13 dígitos. Corrigir na origem.'
@@ -102,6 +104,12 @@ class SessaoPlanilha:
                     if r.cns and not cns_formato(r.cns):
                         r.situacao = 'CNS_HOSPITAL_INVALIDO'
                         r.detalhe = 'CNS deve possuir 15 dígitos; não sobrescrito.'
+                    # Reaproveita uma ficha já coletada pelo próprio XLSX anterior:
+                    # não precisa repetir consultas hospitalares completas.
+                    if (r.situacao_anterior == 'Consulta sem divergências'
+                            and cns_formato(r.cns) and r.carater and r.autorizador):
+                        r.consulta_hospitalar = 'FICHA_CONFERIDA'
+                        r.situacao = 'DADOS_COLETADOS_SEM_DIVERGENCIA'
                     self.registros.append(r)
         finally:
             wb.close()
