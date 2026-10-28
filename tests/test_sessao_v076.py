@@ -94,7 +94,7 @@ class TesteCAPTCHA(unittest.TestCase):
             app.parar.set();t.join(3)
             self.assertTrue(browser.fechado)
     def test_modulo_nao_inclui_scripts_de_bypass(self):
-        s=(ROOT/'src'/'controle_sessao.py').read_text()
+        s=(ROOT/'src'/'controle_sessao.py').read_text(encoding='utf-8')
         self.assertNotIn('captcha.solve',s)
         self.assertNotIn('captcha_bypass',s)
         self.assertNotIn('stealth',s)

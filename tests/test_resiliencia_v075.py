@@ -58,9 +58,9 @@ class Retomada(unittest.TestCase):
         self.assertEqual(situacao_final(reg),'Não encontrado na consulta SISREG')
     def test_codigo_nao_grava_identificadores_em_metadados(self):
         import retomada
-        self.assertNotIn('localStorage',Path(retomada.__file__).read_text())
+        self.assertNotIn('localStorage',Path(retomada.__file__).read_text(encoding='utf-8'))
     def test_etapa_hospitalar_automatica_apos_conclusao(self):
-        s=(ROOT/'src'/'sisreg_login.py').read_text()
+        s=(ROOT/'src'/'sisreg_login.py').read_text(encoding='utf-8')
         self.assertIn('self.root.after(250, self._iniciar_hospital)',s)
         self.assertIn('self.root.after(200, self._iniciar_hospital)',s)
 

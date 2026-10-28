@@ -18,6 +18,8 @@ jobs:
   gerar-exe:
     runs-on: windows-latest
     timeout-minutes: 25
+    env:
+      PYTHONUTF8: "1"
     steps:
       - name: Baixar codigo
         uses: actions/checkout@v4

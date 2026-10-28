@@ -71,15 +71,15 @@ class TestesPastasEPrivacidade(unittest.TestCase):
             self.assertTrue(c.exists())
 
     def test_workflow_compila_exe_renomeado(self):
-        wf=(ROOT/'.github'/'workflows'/'compilar-windows.yml').read_text()
+        wf=(ROOT/'.github'/'workflows'/'compilar-windows.yml').read_text(encoding='utf-8')
         self.assertIn('dist/RPA_SISREG.exe',wf)
         self.assertNotIn('SISREG_Login.exe',wf)
         self.assertIn('RPA_SISREG_Windows',wf)
 
     def test_creditos_e_licenca(self):
-        self.assertIn('bruno.vinicius@joinville.sc.gov.br',(ROOT/'README.md').read_text())
-        self.assertIn('MIT License',(ROOT/'LICENSE').read_text())
-        self.assertIn('LGPD',(ROOT/'SECURITY.md').read_text())
+        self.assertIn('bruno.vinicius@joinville.sc.gov.br',(ROOT/'README.md').read_text(encoding='utf-8'))
+        self.assertIn('MIT License',(ROOT/'LICENSE').read_text(encoding='utf-8'))
+        self.assertIn('LGPD',(ROOT/'SECURITY.md').read_text(encoding='utf-8'))
 
 class FakeBrowser:
     def __init__(self):
