@@ -1,11 +1,37 @@
+# v0.7.6 — CAPTCHA, gestão de sessão e retomada sem perda (2026-10-28)
+
+- CAPTCHA/reCAPTCHA oficial: detecção conservadora e pausa **sem resolução
+  automatizada**; janela nativa visível para intervenção humana.
+- Removido fechamento automático do navegador ao aguardar validação humana
+  após o login. Aguardar tempo indeterminado, sem novas consultas durante o desafio.
+- Botão **Já concluí a verificação no SISREG**; confirmação única de sessão
+  antes de retomar. Se não autenticado, permanece pausado.
+- Nova autenticação pode ser iniciada sem voltar à etapa 1 quando o navegador
+  anterior foi fechado ou o login não foi concluído.
+- Indicador de CNS acumulados no XLSX + consultas da retomada: números de
+  nova sessão não escondem os dados já confirmados.
+- Interrupções por sessão degradada e desafios não viram ausência do paciente.
+- Diagnósticos e logs com códigos permitidos, sem CPF/CNS/AIH, senhas ou HTML.
+- Novos testes sintéticos para CAPTCHA, espera humana sem timeout, preservação
+  da janela e ausência de reenvio automático de autenticação.
+- Sem alteração da regra fiscal, do formato XLSX ou dos seletores de pesquisa.
+
 # v0.7.5 — Resiliência, retomada e continuidade de etapas (2026-10-28)
 
-- Preserva CNS já existentes no XLSX e prioriza pendências ainda não pesquisadas ou falhas técnicas.
-- Pendências de identidade de execução anterior permanecem para revisão humana.
-- Diagnóstico periódico da sessão, repetição limitada em falhas transitórias, e suspensão após falhas consecutivas sem gerar falsas pendências.
-- Salva resultados anteriores, libera login novo e retoma pendentes sem repetir extração da etapa 1.
-- Inicia automaticamente a consulta hospitalar após concluir a etapa 2 na mesma sessão saudável.
-- Mantém interface, credenciais apenas em memória e arquivos sensíveis somente no ambiente institucional.
+- Retomada de cópias XLSX anteriores sem consultar novamente CNS preenchidos;
+  estados antigos de revisão são preservados e não entram em repetição automática.
+- Seleção de pendentes ainda não pesquisados ou com falha técnica, mantendo
+  ordem da planilha; nenhuma alteração nas regras de identificação de AIH.
+- Verificação periódica da sessão SISREG, até uma repetição de navegação em
+  erro transitório e suspensão diante de falhas sequenciais.
+- Resultados consecutivos inconclusivos permanecem provisórios até ocorrer
+  nova consulta confirmada; se a sessão deteriorar, não geram falsas pendências.
+- Em suspensão, os registros confirmados são salvos. O próximo login exige
+  credenciais digitadas novamente e dispensa reexecutar a etapa de PDF.
+- Após concluir e salvar toda a etapa de CNS sem erros impeditivos, a consulta
+  hospitalar começa automaticamente na mesma sessão autenticada.
+- Preservação da interface de quatro abas; sem nova tela, servidor ou serviço
+  externo. Testes apenas com dados sintéticos.
 
 # v0.7.4 — Recuperação de autenticação, pastas portáteis e documentação
 

@@ -21,7 +21,7 @@ FIXTURE = ROOT/'tests'/'fixtures'/'hospital_sintetico.xlsx'
 
 class TestesPastasEPrivacidade(unittest.TestCase):
     def test_versao_central(self):
-        self.assertEqual(APP_VERSION, '0.7.5')
+        self.assertEqual(APP_VERSION, '0.7.6')
 
     def test_exe_congelado_define_raiz_sem_meipass(self):
         with tempfile.TemporaryDirectory() as diretorio:
@@ -114,19 +114,22 @@ class TestesLogin(unittest.TestCase):
         app.parar=threading.Event()
         app.comandos=queue.Queue()
         app.eventos=queue.Queue()
+        app.reiniciar_navegador=threading.Event()
         return app
 
     def test_login_errado_encerra_thread_e_contexto_automaticamente(self):
         pl=FakePlaywright();app=self.objeto_sem_tk()
         with patch('sisreg_login.sync_playwright',return_value=pl),\
              patch('sisreg_login.submeter_login') as login,\
+             patch('sisreg_login.desafio_visivel',return_value=True),\
+             patch.object(app,'_esperar_intervencao',return_value=False),\
              patch('sisreg_login.autenticao_ativa',return_value=False):
             app._navegador_worker('user_demo','senha_incorreta','chrome')
         self.assertEqual(len(pl.launched),1)
         self.assertTrue(pl.launched[0].closed)
         resultados=[]
         while not app.eventos.empty(): resultados.append(app.eventos.get_nowait())
-        self.assertIn('erro_login',[e[0] for e in resultados])
+        self.assertIn('login_enviado',[e[0] for e in resultados])
         self.assertIn('navegador_parou',[e[0] for e in resultados])
         self.assertNotIn('senha_incorreta',repr(resultados))
 
@@ -134,6 +137,8 @@ class TestesLogin(unittest.TestCase):
         pl=FakePlaywright();app=self.objeto_sem_tk()
         with patch('sisreg_login.sync_playwright',return_value=pl),\
              patch('sisreg_login.submeter_login'),\
+             patch('sisreg_login.desafio_visivel',return_value=True),\
+             patch.object(app,'_esperar_intervencao',return_value=False),\
              patch('sisreg_login.autenticao_ativa',return_value=False):
             app._navegador_worker('usuario','senha1','chrome')
             app._navegador_worker('usuario','senha2','chrome')
@@ -154,6 +159,7 @@ class TestesLogin(unittest.TestCase):
         pl.launch=abre
         with patch('sisreg_login.sync_playwright',return_value=pl),\
              patch('sisreg_login.submeter_login'),\
+             patch('sisreg_login.desafio_visivel',return_value=False),\
              patch('sisreg_login.autenticao_ativa',return_value=True):
             app._navegador_worker('usuario','senha_valida','chrome')
         self.assertTrue(pl.launched[0].closed)

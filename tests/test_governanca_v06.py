@@ -189,7 +189,7 @@ class TestePlanilhaSomenteLeitura(unittest.TestCase):
 
 class TesteVersao(unittest.TestCase):
     def test_versao_sem_inconsistencia(self):
-        self.assertEqual(APP_VERSION,'0.7.5')
+        self.assertEqual(APP_VERSION,'0.7.6')
         self.assertIn(APP_VERSION,rotulo_versao())
 
     def test_modulo_builder_usa_versao_central(self):

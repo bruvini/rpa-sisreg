@@ -17,7 +17,9 @@ from app_info import APP_VERSION
 
 EVENTOS = frozenset({'INICIO', 'PREPARO_OK', 'PREPARO_ERRO', 'CADASTRO_OK',
                      'CADASTRO_PENDENCIA', 'HOSPITAL_OK', 'HOSPITAL_PENDENCIA',
-                     'ERRO_TECNICO', 'FALHA_SALVAMENTO', 'INTERRUPCAO', 'FIM'})
+                     'ERRO_TECNICO', 'FALHA_SALVAMENTO', 'INTERRUPCAO', 'FIM',
+                     'VERIFICACAO_HUMANA_EXIGIDA', 'VERIFICACAO_CONFIRMADA_OPERADOR',
+                     'SESSAO_RECUPERADA'})
 ETAPAS = frozenset({'preparo', 'cadastro', 'hospital', 'geral'})
 
 

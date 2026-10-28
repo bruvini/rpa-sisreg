@@ -13,13 +13,14 @@ import sys
 import time
 import os
 from pathlib import Path
-from tkinter import filedialog
+from tkinter import filedialog, messagebox
 from importlib import resources
 from datetime import datetime
 from sisreg_navigation import (consultar_cadastro, ler_cadastro_contexto, autenticao_ativa, NavegacaoInesperada)
 from aih_extract import ler_espelhos_pdf, cpf_valido, cns_formato
 from planilha import SessaoPlanilha
 from retomada import SaudeLote, selecionar_cadastros
+from controle_sessao import AguardarHumano, desafio_visivel
 from sisreg_navigation import NavegacaoInesperada
 from sisreg_hospital import consultar_solicitacao_hospitalar, ResultadoHospital
 import threading
@@ -148,6 +149,10 @@ class Aplicativo:
         self.pausa=threading.Event()
         self.thread_navegador=None
         self.login_pendente=False
+        self.reiniciar_navegador=threading.Event()
+        self.aguardar_humano=AguardarHumano()
+        self.intervencao_pendente=False
+        self.consultas_acumuladas=0
         self.sessao=SessaoPlanilha()
         self.historico = None
         self.estatisticas = Estatisticas()
@@ -296,6 +301,13 @@ class Aplicativo:
         fc.columnconfigure(0,weight=2);fc.columnconfigure(1,weight=2);fc.columnconfigure(2,weight=1)
         self.btn_login=ttk.Button(b,text='Abrir SISREG e entrar',style='Acao.TButton',command=self._iniciar_login)
         self.btn_login.pack(anchor='w',pady=(0,7))
+        self.aviso_verificacao=ttk.Label(
+            b,text='⚠ SISREG aguardando verificação humana. Resolva no navegador e confirme aqui.',
+            foreground='#8a3500', font=('Segoe UI',11,'bold'),wraplength=1040)
+        self.btn_verificacao=ttk.Button(b,text='Já concluí a verificação no SISREG',
+            command=self._confirmar_verificacao)
+        # Estes controles somente aparecem quando o SISREG exigir intervenção.
+
         ttk.Label(b,text='A pesquisa começa automaticamente após o SISREG apresentar o menu de usuário autenticado.',
                   wraplength=920).pack(anchor='w',pady=(0,6))
         ttk.Separator(b,orient='horizontal').pack(fill='x',pady=10)
@@ -512,6 +524,7 @@ class Aplicativo:
         self.preparo_concluido=False;self.cadastro_concluido=False
         self.abas.tab(1,state='disabled');self.abas.tab(2,state='disabled');self.abas.tab(3,state='disabled')
         self.estatisticas=Estatisticas()
+        self.consultas_acumuladas=0
         self.inicio_ciclo=time.perf_counter()
         self.relatorio_finalizado=False
         self.cartao_resultado.pack_forget()
@@ -601,6 +614,69 @@ class Aplicativo:
             self._atualizar_linha_visual(i,self._linha_visual(r))
             self._atualizar_linha_visual(i,self._linha_visual(r,com_cns=True),True)
 
+    def _cns_totais(self):
+        """Progresso acumulado do XLSX, independente do lote e de novo login."""
+        elegiveis=sum(bool(r.cpf) for r in self.sessao.registros)
+        identificados=sum(cns_formato(r.cns) for r in self.sessao.registros)
+        return identificados,elegiveis
+
+    def _exibir_verificacao(self, causa):
+        """Executada somente na thread Tk; sem CAPTCHA em log nem dados clínicos."""
+        self.intervencao_pendente=True
+        self.browser_ready=False
+        self.aviso_verificacao.pack(anchor='w',pady=(6,3))
+        self.btn_verificacao.pack(anchor='w',pady=(0,8))
+        self.btn_verificacao.configure(state='normal')
+        self.btn_lote.configure(state='disabled')
+        self.btn_hospital.configure(state='disabled')
+        self.status.set('Aguardando verificação humana no navegador. Dados já coletados preservados.')
+        self._evento_seguro('VERIFICACAO_HUMANA_EXIGIDA','geral')
+        self.estatisticas.diagnosticar('VERIFICACAO_HUMANA_EXIGIDA','PENDENCIA',categoria='INTERVENCAO_HUMANA')
+        # Uma única janela nativa para chamar atenção; não ocorre em loop.
+        mensagem=('O SISREG exige uma verificação ou novo login.\n\n'
+                  'As consultas foram pausadas e o progresso foi salvo.\n'
+                  'Conclua o CAPTCHA ou login diretamente no Chrome/Edge.\n'
+                  'Depois clique em “Já concluí a verificação no SISREG”.\n\n'
+                  'O RPA não resolverá o desafio automaticamente.')
+        messagebox.showwarning('RPA SISREG — intervenção necessária',mensagem,parent=self.root)
+
+    def _ocultar_verificacao(self):
+        self.intervencao_pendente=False
+        self.aviso_verificacao.pack_forget()
+        self.btn_verificacao.pack_forget()
+
+    def _confirmar_verificacao(self):
+        if not self.intervencao_pendente:
+            return
+        self.btn_verificacao.configure(state='disabled')
+        self.status.set('Conferindo uma vez se o menu autenticado voltou, sem reenviar consultas...')
+        self._evento_seguro('VERIFICACAO_CONFIRMADA_OPERADOR','geral')
+        self.aguardar_humano.confirmar()
+
+    def _esperar_intervencao(self, contexto, origem: str) -> bool:
+        """Worker: mantém navegador aberto por tempo indeterminado.
+
+        O Playwright só é acessado pela thread do navegador. Nenhum polling
+        de autenticação enquanto a pessoa resolve o desafio.
+        """
+        self.aguardar_humano.confirmacao.clear()
+        self.eventos.put(('verificacao_pendente',origem))
+        while self.aguardar_humano.esperar(self.parar,self.reiniciar_navegador):
+            try:
+                if desafio_visivel(contexto):
+                    confirmado=False
+                else:
+                    paginas=[p for p in contexto.pages if not p.is_closed() and endereco_oficial(p.url)]
+                    confirmado=any(autenticao_ativa(pg,timeout=2200) for pg in paginas)
+            except Exception:
+                confirmado=False
+            if confirmado:
+                if origem != 'login':
+                    self.eventos.put(('sessao_recuperada',origem))
+                return True
+            self.eventos.put(('verificacao_incompleta',origem))
+        return False
+
     def _iniciar_login(self):
         if not self.preparo_concluido or self.carregando:
             self.status.set('Conclua a etapa 1 antes de acessar o SISREG.');return
@@ -613,9 +689,12 @@ class Aplicativo:
             # Na falha anterior, a thread pode ainda estar liberando o Chrome.
             # Agendar nova tentativa na própria GUI, sem guardar senha em arquivo.
             self.login_pendente=True
-            self.status.set('Encerrando tentativa anterior. Nova autenticação será iniciada automaticamente...')
+            self.reiniciar_navegador.set()
+            self.status.set('Encerrando sessão anterior para novo login; a planilha será mantida...')
             return
         self.login_pendente=False
+        self.reiniciar_navegador.clear()
+        self._ocultar_verificacao()
         canal='chrome' if self.navegador.get()=='Google Chrome' else 'msedge'
         self.usuario.set('');self.senha.set('');self.parar.clear()
         self.browser_ready=False;self.cadastro_concluido=False
@@ -641,18 +720,29 @@ class Aplicativo:
                     pagina.goto(URL_SISREG,wait_until='domcontentloaded',timeout=45000)
                     submeter_login(pagina,usuario,senha)
                     self.eventos.put(('login_enviado',None))
-                    # Detecção pós-login sem enviar segundo login; qualquer verificação manual mantém-se possível.
-                    if autenticao_ativa(pagina,timeout=45000):
-                        self.eventos.put(('autenticado',None))
-                    else:
-                        self.eventos.put(('erro_login','Acesso não confirmado. Corrija usuário/senha e tente novamente, sem refazer a etapa 1.'))
-                        return  # Fecha navegador/contexto antigos antes de nova tentativa.
+                    # Não deixar o timeout de autenticação fechar um CAPTCHA.
+                    # Verificar o menu brevemente; se houver desafio, não sondar
+                    # novamente até confirmação explícita da operadora.
+                    menu_ok=False
+                    inicio_espera=time.monotonic()
+                    while time.monotonic()-inicio_espera<12 and not self.parar.is_set():
+                        if desafio_visivel(contexto):
+                            break
+                        if autenticao_ativa(pagina,timeout=1600):
+                            menu_ok=True
+                            break
+                        self.parar.wait(0.35)
+                    if not menu_ok:
+                        menu_ok=self._esperar_intervencao(contexto,'login')
+                    if not menu_ok:
+                        return
+                    self.eventos.put(('autenticado',None))
                 except Exception:
                     self.eventos.put(('erro_login','Login ou acesso indisponível. Tente novamente sem refazer a etapa 1.'))
                     return
                 finally:
                     usuario='';senha=''
-                while not self.parar.is_set():
+                while not self.parar.is_set() and not self.reiniciar_navegador.is_set():
                     try: cmd,payload=self.comandos.get(timeout=0.2)
                     except queue.Empty:
                         # Se a operadora fechou o Chrome, liberar novo login na
@@ -675,6 +765,8 @@ class Aplicativo:
                             r=self.sessao.registros[idx]
                             inicio=time.perf_counter()
                             try:
+                                if desafio_visivel(contexto):
+                                    raise NavegacaoInesperada('VERIFICACAO_HUMANA_EXIGIDA')
                                 validas=[pg for pg in contexto.pages if not pg.is_closed() and endereco_oficial(pg.url)]
                                 if not validas:raise NavegacaoInesperada('Sessão SISREG encerrada.')
                                 pagina=validas[-1]
@@ -690,6 +782,10 @@ class Aplicativo:
                                               'Consulta não finalizada. Revisar a tela do SISREG.')
                                 self.eventos.put(('diagnostico_tecnico',('FICHA_HOSPITALAR',
                                    'ERRO',j,time.perf_counter()-inicio,categoria_excecao(type(exc).__name__))))
+                            if desafio_visivel(contexto):
+                                self.eventos.put(('hospital_alerta',
+                                    'Acesso suspenso pelo SISREG. Aguarde a verificação humana.'))
+                                break
                             falha = resultado.situacao not in ('FICHA_CONFERIDA','PROCEDIMENTO_DIVERGENTE')
                             categoria = ({'PROCEDIMENTO_DIVERGENTE':'PROCEDIMENTO_DIVERGENTE',
                                 'FICHA_NAO_ABERTA':'FICHA_NAO_ABERTA',
@@ -706,6 +802,9 @@ class Aplicativo:
                                 break
                             self.parar.wait(1.8)
                         self.eventos.put(('hospital_fim',len(indices)))
+                        if (erros_seguidos>=3 or desafio_visivel(contexto)) and not self.parar.is_set():
+                            if not self._esperar_intervencao(contexto,'hospital'):
+                                return
                         continue
                     if cmd!='lote':continue
                     indices=payload
@@ -732,6 +831,11 @@ class Aplicativo:
                         identificador=r.cpf
                         cns,motivo=None,'FALHA_DE_NAVEGACAO_OU_TEMPO'
                         erro_tecnico=False
+                        if desafio_visivel(contexto):
+                            suspenso=True
+                            self.eventos.put(('lote_alerta',
+                                'O SISREG solicitou verificação humana. Consultas pausadas.'))
+                            break
                         # No máximo duas tentativas apenas para falhas de navegação.
                         # Não repetir automaticamente uma identidade divergente.
                         for tentativa in (1,2):
@@ -752,9 +856,16 @@ class Aplicativo:
                             except Exception as exc:
                                 erro_tecnico=True
                                 self.eventos.put(('diagnostico_navegacao', type(exc).__name__))
+                                if desafio_visivel(contexto):
+                                    break  # Não repetir pesquisa diante de CAPTCHA.
                                 if tentativa==1 and not self.parar.wait(2.0):
                                     continue
                         if self.parar.is_set():break
+                        if desafio_visivel(contexto):
+                            suspenso=True
+                            self.eventos.put(('lote_alerta',
+                                'O SISREG solicitou verificação humana. Nenhum dado incerto será salvo.'))
+                            break
                         decisao=saude.registrar(cns,erro_tecnico=erro_tecnico)
                         if decisao.startswith('SUSPENDER_'):
                             motivo_suspensao = ('Falhas de navegação consecutivas.' if erro_tecnico
@@ -790,8 +901,11 @@ class Aplicativo:
                                 'Não foi possível confirmar a sessão após resultados inconclusivos. '
                                 'Faça novo login para retomar sem perder os CNS anteriores.'))
                     self.eventos.put(('lote_fim',(processados,len(indices))))
-                    if suspenso:
-                        return  # Encerra a sessão comprometida; novo login é humano.
+                    if suspenso and not self.parar.is_set():
+                        # O navegador permanece disponível para CAPTCHA ou login
+                        # manual. Retomada somente após confirmação da operadora.
+                        if not self._esperar_intervencao(contexto,'cadastro'):
+                            return
         except Exception:
             self.eventos.put(('erro_login','Não foi possível iniciar o navegador autorizado.'))
         finally:
@@ -822,7 +936,9 @@ class Aplicativo:
         self.inicio_cadastro=time.perf_counter()
         self.consultas_cadastro=0
         self.estatisticas.registrar_total('cadastro',len(selecionados))
-        self.resumo_cadastro.set(f'0 de {len(selecionados)} consultas elegíveis concluídas (0,0%).')
+        identificados,elegiveis=self._cns_totais()
+        self.resumo_cadastro.set(f'Acumulado: {identificados}/{elegiveis} CNS preenchidos '
+            f'({percentual(identificados,elegiveis)}). Nesta retomada: 0/{len(selecionados)}.')
         self.tempo_cadastro.set(f'Iniciando · manual projetado: {self._duracao(len(selecionados)*10)} (10s/consulta).')
         self.tipo_lote='cadastro';self.processando=True;self.persistencia_falhou=False;self.navegacao_falhou=False;self.pausa.clear();self.parar.clear()
         self.cadastro_concluido=False
@@ -869,7 +985,7 @@ class Aplicativo:
             self.pausa.set();self.btn_pausa.configure(text='Retomar')
     def _interromper(self):
         # Interrompe o processo e encerra o navegador, evitando pesquisas sem supervisão.
-        self.parar.set();self.pausa.clear()
+        self.parar.set();self.pausa.clear();self.aguardar_humano.confirmar()
         self._evento_seguro('INTERRUPCAO','geral')
         self.estatisticas.diagnosticar('INTERRUPCAO','INTERRUPCAO',categoria='INTERRUPCAO_SOLICITADA')
         self.status.set('Solicitada interrupção; os resultados recebidos serão salvos.')
@@ -977,14 +1093,32 @@ class Aplicativo:
                             self.historico.evento('PREPARO_OK', 'preparo')
                         except OSError:
                             self.status.set('Histórico local não pôde ser atualizado; avise a TI.')
+                elif evento=='verificacao_pendente':
+                    self._salvar_checkpoint() if self.preparo_concluido and self.sessao.origem else None
+                    self._exibir_verificacao(dado)
+                elif evento=='verificacao_incompleta':
+                    self.btn_verificacao.configure(state='normal')
+                    self.status.set('Verificação ainda pendente. Conclua no navegador e confirme novamente. Nenhuma pesquisa foi reenviada.')
+                elif evento=='sessao_recuperada':
+                    self._ocultar_verificacao()
+                    self.browser_ready=True
+                    self.navegacao_falhou=False
+                    self._evento_seguro('SESSAO_RECUPERADA','geral')
+                    self.estatisticas.diagnosticar('SESSAO_RECUPERADA','OK')
+                    self.status.set('Sessão confirmada. Retomando apenas as consultas pendentes...')
+                    if dado=='hospital':
+                        self.root.after(250,self._iniciar_hospital)
+                    else:
+                        self.root.after(250,self._iniciar_lote)
                 elif evento=='login_enviado':
                     self.estatisticas.diagnosticar('LOGIN_SUBMETIDO','OK')
                     self.status.set('Login enviado; aguardando o menu autenticado para iniciar o lote automaticamente.')
                 elif evento=='autenticado':
+                    self._ocultar_verificacao()
                     self.estatisticas.diagnosticar('MENU_AUTENTICADO','OK')
                     self.estatisticas.diagnosticar('SESSAO_HTTPS_OFICIAL','OK')
                     self.browser_ready=True
-                    self.status.set('Acesso identificado. Iniciando automaticamente a pesquisa de todos os CPFs elegíveis...')
+                    self.status.set('Acesso identificado. Retomando consultas elegíveis, preservando CNS já encontrados...')
                     self._iniciar_lote()
                 elif evento=='hospital_iniciado':
                     self.progresso_hospital.set(f'Iniciando {dado} consultas hospitalares...')
@@ -1036,6 +1170,7 @@ class Aplicativo:
                 elif evento=='lote_item':
                     idx,cns,motivo,contador,total=dado
                     self.consultas_cadastro+=1
+                    self.consultas_acumuladas+=1
                     reg=self.sessao.registros[idx]
                     self.sessao.registrar_cadastro_em_lote(reg,cns,motivo)
                     self._evento_seguro('CADASTRO_OK' if reg.situacao == 'CNS_CONFIRMADO_SISREG' else 'CADASTRO_PENDENCIA','cadastro',contador)
@@ -1051,11 +1186,13 @@ class Aplicativo:
                     self._atualizar_linha_visual(idx,self._linha_visual(reg))
                     self._atualizar_linha_visual(idx,self._linha_visual(reg,com_cns=True),True)
                     self.barra.configure(value=100*contador/max(total,1))
-                    self.resumo_cadastro.set(f'CNS identificados: {self.dados_atuais["cns"]} de {total} consultas elegíveis ({percentual(self.dados_atuais["cns"],total)}).')
+                    identificados,elegiveis=self._cns_totais()
+                    self.resumo_cadastro.set(f'Acumulado: {identificados}/{elegiveis} CNS preenchidos '
+                        f'({percentual(identificados,elegiveis)}). Nesta retomada: {contador}/{total}.')
                     self.tempo_cadastro.set(f'Tempo decorrido: {self._duracao(time.perf_counter()-self.inicio_cadastro)} · Manual hipotético: {self._duracao(total*10)} (10s por consulta).')
-                    self.progresso.set(f'{contador}/{total} consultados · '
-                                      f'{self.dados_atuais["cns"]} CNS identificados · '
-                                      f'{self.dados_atuais["pendentes"]} pendências')
+                    self.progresso.set(f'{contador}/{total} consultados nesta retomada · '
+                                      f'{identificados} CNS acumulados · '
+                                      f'{self.dados_atuais["pendentes"]} pendências nesta retomada')
                     pendencias=sorted(((n,m) for m,n in self.motivos_cadastro.items()
                                        if not m.startswith('CNS_CONFIRMADO')),reverse=True)
                     self.diagnostico_cns.set('Pendências por motivo: '+
@@ -1063,6 +1200,7 @@ class Aplicativo:
                          if pendencias else 'nenhuma até agora'))
                 elif evento=='lote_fim':
                     processados,previstos=dado
+                    identificados,elegiveis=self._cns_totais()
                     self.estatisticas.concluir('cadastro',time.perf_counter()-self.inicio_cadastro,
                         consultados=processados,encontrados=self.dados_atuais['cns'],
                         pendencias=self.dados_atuais['pendentes'],falhas=self.dados_atuais['falhas'],
@@ -1071,7 +1209,7 @@ class Aplicativo:
                     self._salvar_checkpoint()
                     self.processando=False;self.btn_lote.configure(state='normal')
                     self._resumir_historico()
-                    if not self.persistencia_falhou and not self.navegacao_falhou and processados==previstos and not self.parar.is_set():
+                    if not self.persistencia_falhou and not self.navegacao_falhou and not self.intervencao_pendente and processados==previstos and not self.parar.is_set():
                         self.cadastro_concluido=True
                         self.abas.tab(2,state='normal')
                         self._atualizar_avanco()
@@ -1080,7 +1218,7 @@ class Aplicativo:
                         # sem reiniciar o login e sem clique extra na interface.
                         self.root.after(250, self._iniciar_hospital)
                     elif self.navegacao_falhou and not self.persistencia_falhou:
-                        self.status.set('Lote suspenso por falhas consecutivas do SISREG. Salvos os dados já obtidos; use Retomar quando disponível.')
+                        self.status.set('Sessão do SISREG pausada; progresso salvo. Aguarde a verificação humana no navegador.')
                     elif self.persistencia_falhou:
                         self.status.set('LOTE INTERROMPIDO: falha ao salvar. Feche o Excel e tente salvar novamente.')
                     else:
@@ -1095,6 +1233,7 @@ class Aplicativo:
                     self.browser_ready=False
                     self.status.set(str(dado))
                 elif evento=='navegador_parou':
+                    self._ocultar_verificacao()
                     self.estatisticas.diagnosticar('SESSAO_ENCERRADA','OK')
                     if self.navegacao_falhou and self.preparo_concluido:
                         self.status.set('Sessão interrompida. Informe novamente seu login para retomar somente os CNS pendentes. A planilha foi preservada.')
@@ -1192,8 +1331,9 @@ class Aplicativo:
             self.resultado_arquivo_log.set('Não foi possível gerar o TXT em Logs. Verifique permissão de gravação.')
         n=len(self.sessao.registros)
         e2=etapas['cadastro'];e3=etapas['hospital']
+        identificados,elegiveis=self._cns_totais()
         self.resultado_geral.set(f'{n} registros hospitalares · {etapas["preparo"].encontrados} CPFs disponíveis ({percentual(etapas["preparo"].encontrados,n)})\n'
-            f'{e2.encontrados}/{e2.total} CNS localizados ({percentual(e2.encontrados,e2.total)}) · '
+            f'{identificados}/{elegiveis} CNS acumulados ({percentual(identificados,elegiveis)}) · '
             f'{e3.encontrados}/{e3.total} fichas sem divergências nos campos consultados ({percentual(e3.encontrados,e3.total)})\n'
             f'Pendências da etapa 3: {e3.pendencias} · erros técnicos: {sum(e.falhas_tecnicas for e in etapas.values())}.')
         manual=self.estatisticas.total_manual()
