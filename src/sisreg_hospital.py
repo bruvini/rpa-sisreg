@@ -5,6 +5,7 @@ ficha cuja AIH corresponda. Quando a tela difere, registra pendência.
 """
 from __future__ import annotations
 from dataclasses import dataclass
+import unicodedata
 import re
 import time
 import hashlib
@@ -168,7 +169,7 @@ def _link_proxima_pagina(frame):
     return None
 
 
-def selecionar_linha_aih(pagina, aih: str, espera_ms: int = 15000, observador=None):
+def selecionar_linha_aih(pagina, aih: str, espera_ms: int = 15000, observador=None, cancelar=None):
     """Busca AIH exata em TODAS as páginas acessíveis de resultados.
 
     Sem próximo link, só conclui ausência após visitar a última página.
@@ -182,6 +183,7 @@ def selecionar_linha_aih(pagina, aih: str, espera_ms: int = 15000, observador=No
     linhas = []
     assinatura = None
     while time.monotonic() < fim:
+        _verificar_interrupcao(cancelar)
         frame, linhas, assinatura = _ler_tabela_de_resultados(pagina)
         if linhas:
             break
@@ -190,6 +192,7 @@ def selecionar_linha_aih(pagina, aih: str, espera_ms: int = 15000, observador=No
         raise NavegacaoInesperada('Tabela de resultados não disponível; busca inconclusiva.')
     visitadas = set()
     for numero_pagina in range(1, MAX_PAGINAS_RESULTADO + 1):
+        _verificar_interrupcao(cancelar)
         if assinatura in visitadas:
             raise NavegacaoInesperada('Paginação repetida; não foi possível concluir a busca.')
         visitadas.add(assinatura)
@@ -220,6 +223,7 @@ def selecionar_linha_aih(pagina, aih: str, espera_ms: int = 15000, observador=No
         limite = time.monotonic() + 12
         atualizada = False
         while time.monotonic() < limite:
+            _verificar_interrupcao(cancelar)
             novo_frame, novas_linhas, nova_assinatura = _ler_tabela_de_resultados(pagina)
             if novas_linhas and nova_assinatura != assinatura:
                 frame, linhas, assinatura = novo_frame, novas_linhas, nova_assinatura
@@ -229,6 +233,11 @@ def selecionar_linha_aih(pagina, aih: str, espera_ms: int = 15000, observador=No
         if not atualizada:
             raise NavegacaoInesperada('Página seguinte não foi confirmada; busca inconclusiva.')
     raise NavegacaoInesperada('Limite de páginas alcançado; busca inconclusiva.')
+
+
+def _verificar_interrupcao(cancelar):
+    if cancelar is not None and cancelar():
+        raise NavegacaoInesperada('Consulta interrompida pelo operador.')
 
 
 def _paginas_para_ficha(pagina):
@@ -250,7 +259,7 @@ def _paginas_para_ficha(pagina):
             continue
 
 
-def _localizar_ficha_da_aih(pagina, aih: str, espera_ms: int = 16000):
+def _localizar_ficha_da_aih(pagina, aih: str, espera_ms: int = 16000, cancelar=None):
     """Não confunde ficha antiga com a AIH buscada, nem depende da janela."""
     procurada = normalizar_aih(aih)
     if not procurada:
@@ -258,6 +267,7 @@ def _localizar_ficha_da_aih(pagina, aih: str, espera_ms: int = 16000):
     fim = time.monotonic() + max(0, espera_ms) / 1000
     outra_ficha = False
     while True:
+        _verificar_interrupcao(cancelar)
         for candidata in _paginas_para_ficha(pagina):
             try:
                 frame, ficha = _encontrar(candidata, FICHA, tempo=350)
@@ -275,50 +285,121 @@ def _localizar_ficha_da_aih(pagina, aih: str, espera_ms: int = 16000):
     return None, ('AIH_NAO_COMPROVADA_FICHA' if outra_ficha else 'FICHA_NAO_ABERTA')
 
 
+def _texto_campo_ficha(frame, seletor):
+    try:
+        _, local = _encontrar(frame, seletor, tempo=450)
+        return local.inner_text(timeout=1200).strip()
+    except Exception:
+        return ''
+
+
+def _campos_por_rotulo(frame):
+    """Fallback: somente rótulos da ficha; códigos ambíguos não são assumidos."""
+    try:
+        linhas = frame.locator('#fichaInternacao table tr').all_inner_texts(timeout=1800)[:110]
+    except Exception:
+        return '', '', ''
+
+    def sem_acentos(texto):
+        return ''.join(c for c in unicodedata.normalize('NFD', texto.upper())
+                       if unicodedata.category(c) != 'Mn')
+
+    candidatos = [[], [], []]
+    for i, linha in enumerate(linhas):
+        rotulo = sem_acentos(linha)
+        janela = linhas[i:i + 2]
+        if 'CARATER' in rotulo and ('INTERNACAO' in rotulo or 'ATENDIMENTO' in rotulo):
+            candidatos[0].extend(janela)
+        if 'PROCEDIMENTO' in rotulo:
+            candidatos[2].extend(janela)
+        if 'SOLICITACAO' in rotulo and ('CODIGO' in rotulo or 'NUMERO' in rotulo):
+            candidatos[1].append(linha)
+
+    def unico(textos, extrator):
+        encontrados = {n for t in textos if (n := extrator(t))}
+        return next(iter(encontrados)) if len(encontrados) == 1 else ''
+
+    return (unico(candidatos[0], obter_carater),
+            unico(candidatos[1], obter_autorizador),
+            unico(candidatos[2], obter_procedimento))
+
+
+def _ler_tres_campos(frame, cancelar=None, espera_ms=8500):
+    """Espera renderização da ficha e usa rótulos quando as linhas se deslocam."""
+    fim = time.monotonic() + espera_ms / 1000
+    viu_campo = False
+    while True:
+        _verificar_interrupcao(cancelar)
+        origem_autorizada(frame)
+        textos = (_texto_campo_ficha(frame, CARATER),
+                  _texto_campo_ficha(frame, CODIGO_SOLICITACAO),
+                  _texto_campo_ficha(frame, PROCEDIMENTO))
+        valores = (obter_carater(textos[0]), obter_autorizador(textos[1]),
+                   obter_procedimento(textos[2]))
+        viu_campo |= any(bool(t) for t in textos)
+        if not all(valores):
+            rotulados = _campos_por_rotulo(frame)
+            valores = tuple(a or b for a, b in zip(valores, rotulados))
+        if all(valores):
+            return valores, ''
+        if time.monotonic() >= fim:
+            return None, ('CAMPOS_FICHA_INCOMPLETOS' if viu_campo
+                          else 'CAMPOS_FICHA_NAO_CONFIRMADOS')
+        time.sleep(.3)
+
+
 def obter_detalhes(pagina, aih: str, procedimento_hospital: str = '',
-                   espera_ficha_ms: int = 16000) -> ResultadoHospital:
-    frame, falha = _localizar_ficha_da_aih(pagina, aih, espera_ms=espera_ficha_ms)
+                   espera_ficha_ms: int = 16000, cancelar=None) -> ResultadoHospital:
+    frame, falha = _localizar_ficha_da_aih(pagina, aih, espera_ms=espera_ficha_ms,
+                                          cancelar=cancelar)
     if falha == 'FICHA_NAO_ABERTA':
-        return ResultadoHospital('FICHA_NAO_ABERTA',
-                                 'A ficha de internação não apareceu após selecionar a AIH.')
+        return ResultadoHospital('FICHA_NAO_ABERTA', 'Ficha não apareceu após clicar na AIH.')
     if falha:
         return ResultadoHospital('AIH_NAO_COMPROVADA_FICHA',
-                                 'Nenhuma ficha aberta comprovou a AIH pesquisada.')
+                                 'Nenhuma ficha confirmou a AIH selecionada.')
+    campos, erro = _ler_tres_campos(frame, cancelar=cancelar)
+    if erro:
+        return ResultadoHospital(erro,
+                                 'A ficha abriu, mas os três campos não foram validados.')
+    carater, solicitacao, procedimento = campos
+    # Um carregamento tardio não pode misturar dados da ficha anterior.
+    _verificar_interrupcao(cancelar)
     try:
-        # Ler campos do mesmo quadro cuja AIH foi confirmada.
-        _, campo_carater = _encontrar(frame, CARATER, tempo=2500)
-        _, campo_solic = _encontrar(frame, CODIGO_SOLICITACAO, tempo=2500)
-        _, campo_proc = _encontrar(frame, PROCEDIMENTO, tempo=2500)
-        carater = obter_carater(campo_carater.inner_text(timeout=3000))
-        solicitacao = obter_autorizador(campo_solic.inner_text(timeout=3000))
-        procedimento = obter_procedimento(campo_proc.inner_text(timeout=3000))
+        _, ficha = _encontrar(frame, FICHA, tempo=450)
+        numeros = re.findall(r'(?<!\d)\d{12}-?\d(?!\d)', ficha.inner_text(timeout=1600))
+        if normalizar_aih(aih) not in {normalizar_aih(v) for v in numeros}:
+            return ResultadoHospital('AIH_NAO_COMPROVADA_FICHA',
+                                     'A ficha mudou durante a leitura; dados descartados.')
     except Exception:
-        return ResultadoHospital('CAMPOS_FICHA_NAO_CONFIRMADOS',
-                                 'Seletores de caráter, solicitação ou procedimento não confirmados.')
-    if not carater or not solicitacao or not procedimento:
-        return ResultadoHospital('CAMPOS_FICHA_INCOMPLETOS',
-                                 'Caráter, solicitação ou procedimento não extraídos com segurança.')
+        return ResultadoHospital('AIH_NAO_COMPROVADA_FICHA',
+                                 'A ficha não pôde ser validada ao finalizar a leitura.')
     esperado = digitos(procedimento_hospital)
     if len(esperado) != 10:
         return ResultadoHospital('PROCEDIMENTO_NAO_CONFIRMADO',
-                                 'Procedimento hospitalar ausente/inválido: comparação não realizada.',
+                                 'Procedimento do hospital indisponível; comparação pendente.',
                                  carater, '', procedimento, solicitacao)
     if esperado != procedimento:
         return ResultadoHospital('PROCEDIMENTO_DIVERGENTE',
-                                 'Procedimento da ficha difere do informado pelo hospital.',
+                                 'O procedimento da ficha difere do informado pelo hospital.',
                                  carater, '', procedimento, solicitacao)
     return ResultadoHospital('FICHA_CONFERIDA',
-                             'AIH exata localizada e procedimento compatível.',
+                             'AIH exata e procedimento compatível com o hospital.',
                              carater, '', procedimento, solicitacao)
 
 
 def consultar_solicitacao_hospitalar(pagina, cns: str, aih: str,
-                                   procedimento: str = '', observador=None) -> ResultadoHospital:
+                                   procedimento: str = '', observador=None, cancelar=None) -> ResultadoHospital:
     """Consulta por etapas, com telemetria restrita a códigos SEM dados de pacientes."""
     for acao, funcao in (
         ('BUSCA_HOSPITALAR', lambda: pesquisar_por_cns(pagina, cns)),
-        ('AIH_EXATA', lambda: selecionar_linha_aih(pagina, aih, observador=observador)),
-        ('LEITURA_FICHA', lambda: obter_detalhes(pagina, aih, procedimento))):
+        ('AIH_EXATA', lambda: selecionar_linha_aih(
+            pagina, aih, observador=observador, cancelar=cancelar)
+            if cancelar is not None else selecionar_linha_aih(
+                pagina, aih, observador=observador)),
+        ('LEITURA_FICHA', lambda: obter_detalhes(
+            pagina, aih, procedimento, cancelar=cancelar)
+            if cancelar is not None else obter_detalhes(pagina, aih, procedimento))):
+        _verificar_interrupcao(cancelar)
         inicio = time.perf_counter()
         try:
             resultado = funcao()
