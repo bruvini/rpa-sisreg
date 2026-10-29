@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
-from sisreg_hospital import CARATER, CODIGO_SOLICITACAO, PROCEDIMENTO, FICHA, obter_detalhes
+from sisreg_hospital import CODIGO_SOLICITACAO, FICHA, obter_detalhes
 from sisreg_navigation import NavegacaoInesperada
 from saida_xlsx import situacao_final, comparacao_procedimento
 from planilha import Registro, SessaoPlanilha
@@ -25,22 +25,21 @@ class Campo:
 
 class TesteFichaV0710(unittest.TestCase):
     def test_seletores_confirmados(self):
-        self.assertIn('nth-child(1)', CODIGO_SOLICITACAO)
-        self.assertIn('nth-child(46)', CARATER)
-        self.assertIn('nth-child(50)', PROCEDIMENTO)
+        self.assertIn('#fichaInternacao', CODIGO_SOLICITACAO)
 
     def consultar_ficha_simulada(self, texto, proc=PROC, popup=True):
         principal = Pagina()
         ficha = Pagina() if popup else principal
         principal.context = SimpleNamespace(pages=[principal, ficha] if popup else [principal])
         ficha.context = principal.context
-        dados = {FICHA:texto, CARATER:'10 - ELETIVO',
-                 CODIGO_SOLICITACAO:'670478410', PROCEDIMENTO:PROC+' - PROCEDIMENTO'}
+        dados = {FICHA:texto, CODIGO_SOLICITACAO:'670478410'}
         def localizar(pg, seletor, **kwargs):
             if pg is not ficha or seletor not in dados:
                 raise NavegacaoInesperada('Não encontrado')
             return ficha, Campo(dados[seletor])
-        with patch('sisreg_hospital._encontrar', side_effect=localizar):
+        with patch('sisreg_hospital._encontrar', side_effect=localizar), \
+             patch('sisreg_hospital._campos_por_rotulo',
+                   return_value=('10','670478410',PROC)):
             return obter_detalhes(principal, AIH, proc, espera_ficha_ms=25)
 
     def test_popup_aih_exata(self):
@@ -66,32 +65,29 @@ if __name__=='__main__': unittest.main()
 
 class TesteFichaV0711(unittest.TestCase):
     def test_campos_por_rotulo_em_linhas_diferentes(self):
-        from sisreg_hospital import _ler_tres_campos
+        from sisreg_hospital import _campos_por_rotulo
         quadro = Pagina()
-        linhas = SimpleNamespace(all_inner_texts=lambda **k: [
-            'CÓDIGO DA SOLICITAÇÃO 670478410',
-            'CARÁTER DA INTERNAÇÃO',
-            '10 - ELETIVO',
-            'CÓDIGO DO PROCEDIMENTO',
-            '0408050063 - PROCEDIMENTO'
-        ])
-        quadro.locator = lambda seletor: linhas
-        with patch('sisreg_hospital._encontrar', side_effect=NavegacaoInesperada('Linha deslocada')):
-            valores, erro = _ler_tres_campos(quadro, espera_ms=100)
-        self.assertEqual(erro, '')
-        self.assertEqual(valores, ('10','670478410','0408050063'))
+        linhas = [
+            ['Código Solicitação: 670478410','Número AIH: 900000000012-3'],
+            ['Caráter','Classificação de Risco'],
+            ['10 - Eletivo','Prioridade 2 - Não urgente'],
+            ['Procedimento Solicitado:','Código:'],
+            ['PROCEDIMENTO SINTETICO','0408050063']]
+        quadro.locator = lambda selector: SimpleNamespace(evaluate_all=lambda *a,**k: linhas)
+        self.assertEqual(_campos_por_rotulo(quadro),('10','670478410','0408050063'))
 
     def test_procedimentos_ambiguos_nao_sao_adivinhados(self):
         from sisreg_hospital import _campos_por_rotulo
         quadro=Pagina()
-        linhas=SimpleNamespace(all_inner_texts=lambda **k: [
-            'CÓDIGO DO PROCEDIMENTO', '0408050063 - PROCEDIMENTO',
-            'CÓDIGO DO PROCEDIMENTO', '0409040193 - PROCEDIMENTO'
-        ])
-        quadro.locator=lambda seletor:linhas
-        self.assertEqual(_campos_por_rotulo(quadro)[2], '')
+        linhas=[
+            ['Procedimento Solicitado:','Código:'],
+            ['PROCEDIMENTO SINTETICO','0408050063'],
+            ['Procedimento Solicitado:','Código:'],
+            ['OUTRO PROCEDIMENTO','0409040193']]
+        quadro.locator=lambda selector: SimpleNamespace(evaluate_all=lambda *a,**k:linhas)
+        self.assertEqual(_campos_por_rotulo(quadro)[2],'')
 
     def test_cancelar_localizacao_da_ficha(self):
         from sisreg_hospital import _localizar_ficha_da_aih
         with self.assertRaises(NavegacaoInesperada):
-            _localizar_ficha_da_aih(Pagina(), AIH, espera_ms=16000, cancelar=lambda:True)
+            _localizar_ficha_da_aih(Pagina(),AIH,espera_ms=16000,cancelar=lambda:True)

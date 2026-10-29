@@ -26,7 +26,9 @@ class TesteSolicitacao(unittest.TestCase):
           '#fichaInternacao > table > tbody > tr:nth-child(1) > td:nth-child(1) > b':'670478410',
           '#fichaInternacao > table > tbody > tr:nth-child(50) > td:nth-child(2)':'0408050063'
         }
-        with patch('sisreg_hospital._encontrar',side_effect=lambda p,s,**k:(p,Texto(valores[s]))):
+        with patch('sisreg_hospital._encontrar',side_effect=lambda p,s,**k:(p,Texto(valores[s]))), \
+             patch('sisreg_hospital._campos_por_rotulo',
+                   return_value=('10','670478410','0408050063')):
             r=obter_detalhes(Pagina(),'9000000000123','0408050063')
         self.assertEqual(r.situacao,'FICHA_CONFERIDA')
         self.assertEqual(r.solicitacao,'670478410')

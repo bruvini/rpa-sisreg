@@ -157,7 +157,9 @@ class TesteFichaHospitalar(unittest.TestCase):
           '#fichaInternacao > table > tbody > tr:nth-child(50) > td:nth-child(2)':'0409040193',
         }
         def loc(page,selector,**kwargs):return page,_TextoLoc(d[selector])
-        with patch('sisreg_hospital._encontrar',loc):
+        with patch('sisreg_hospital._encontrar',loc), patch(
+                'sisreg_hospital._campos_por_rotulo',
+                return_value=('10','0004532108','0409040193')):
             r=obter_detalhes(_FichePage(),'9000000000123','0408050063',espera_ficha_ms=25)
         self.assertEqual(r.situacao,'PROCEDIMENTO_DIVERGENTE')
         self.assertEqual(r.carater,'10')
