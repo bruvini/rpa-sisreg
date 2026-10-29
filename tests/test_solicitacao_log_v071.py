@@ -18,13 +18,13 @@ class Pagina:
     url='https://sisregiii.saude.gov.br/cgi-bin/index'
 
 class TesteSolicitacao(unittest.TestCase):
-    def test_versao(self):self.assertEqual(APP_VERSION,'0.7.9')
+    def test_versao(self):self.assertEqual(APP_VERSION,'0.7.10')
     def test_ficha_separa_numero_solicitacao_de_autorizador(self):
         valores={
           '#fichaInternacao':'Código Solicitação 670478410; Número AIH 900000000012-3',
-          'xpath=//*[@id="fichaInternacao"]/table/tbody/tr[44]/td[1]':'10 - ELETIVO',
-          'xpath=//*[@id="fichaInternacao"]/table/tbody/tr[1]/td[1]/b':'670478410',
-          'xpath=//*[@id="fichaInternacao"]/table/tbody/tr[48]/td[2]':'0408050063'
+          '#fichaInternacao > table > tbody > tr:nth-child(46) > td:nth-child(1)':'10 - ELETIVO',
+          '#fichaInternacao > table > tbody > tr:nth-child(1) > td:nth-child(1) > b':'670478410',
+          '#fichaInternacao > table > tbody > tr:nth-child(50) > td:nth-child(2)':'0408050063'
         }
         with patch('sisreg_hospital._encontrar',side_effect=lambda p,s,**k:(p,Texto(valores[s]))):
             r=obter_detalhes(Pagina(),'9000000000123','0408050063')

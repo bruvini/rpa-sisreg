@@ -28,7 +28,7 @@ class FakePlaywright:
     def __exit__(self,*a):return False
 
 class TesteRetomadaHospitalar(unittest.TestCase):
-    def test_versao(self):self.assertEqual(APP_VERSION,'0.7.9')
+    def test_versao(self):self.assertEqual(APP_VERSION,'0.7.10')
     def test_tres_erros_pausam_sem_finalizar_a_etapa(self):
         app=Aplicativo.__new__(Aplicativo)
         app.parar=threading.Event();app.pausa=threading.Event();app.reiniciar_navegador=threading.Event()
