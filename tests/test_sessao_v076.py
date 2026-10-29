@@ -41,7 +41,7 @@ class FakePlaywright:
     def __exit__(self,*a):return False
 
 class TesteCAPTCHA(unittest.TestCase):
-    def test_versao(self):self.assertEqual(APP_VERSION,'0.7.13')
+    def test_versao(self):self.assertEqual(APP_VERSION,'0.7.14')
     def test_texto_sisreg_detectado(self):
         self.assertTrue(texto_exige_verificacao('Devido a grande quantidade de requisições (> 500) ... CAPTCHA'))
         self.assertTrue(texto_exige_verificacao('Teste automatizado para diferenciação entre computadores e humanos'))
