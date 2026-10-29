@@ -1,3 +1,5 @@
+Consulte [CHANGELOG_v079.md](CHANGELOG_v079.md) para a versão 0.7.9.
+
 # v0.7.6 — CAPTCHA, gestão de sessão e retomada sem perda (2026-10-28)
 
 - CAPTCHA/reCAPTCHA oficial: detecção conservadora e pausa **sem resolução

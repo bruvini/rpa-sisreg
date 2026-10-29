@@ -28,12 +28,22 @@ class FakePlaywright:
     def __exit__(self,*a):return False
 
 class TesteRetomadaHospitalar(unittest.TestCase):
-    def test_versao(self):self.assertEqual(APP_VERSION,'0.7.8')
+    def test_versao(self):self.assertEqual(APP_VERSION,'0.7.9')
     def test_tres_erros_pausam_sem_finalizar_a_etapa(self):
         app=Aplicativo.__new__(Aplicativo)
         app.parar=threading.Event();app.pausa=threading.Event();app.reiniciar_navegador=threading.Event()
         app.eventos=queue.Queue();app.comandos=queue.Queue()
         app.comandos.put(('hospital',[0,1,2]))
+        fila_real=app.comandos
+        class FilaDeTeste:
+            def __init__(self):self.primeiro=True
+            def get(self,timeout=None):
+                if self.primeiro:
+                    self.primeiro=False
+                    return fila_real.get_nowait()
+                app.parar.set()
+                raise queue.Empty()
+        app.comandos=FilaDeTeste()
         r=SimpleNamespace(cns='700000000000001',aih='9000000000123',procedimento='0401010010')
         app.sessao=SimpleNamespace(registros=[r,r,r])
         with patch('sisreg_login.sync_playwright',return_value=FakePlaywright()), \
@@ -45,9 +55,11 @@ class TesteRetomadaHospitalar(unittest.TestCase):
             app._navegador_worker('operador-ficticio','segredo-ficticio','chrome')
         ev=[]
         while not app.eventos.empty():ev.append(app.eventos.get_nowait()[0])
-        self.assertIn('hospital_suspenso',ev)
+        self.assertIn('hospital_pausa',ev)
+        self.assertNotIn('hospital_suspenso',ev)
+        self.assertNotIn('verificacao_pendente',ev)
         self.assertNotIn('hospital_fim',ev)
-        self.assertLess(ev.index('hospital_suspenso'),ev.index('navegador_parou'))
+        self.assertLess(ev.index('hospital_pausa'),ev.index('navegador_parou'))
         self.assertNotIn('segredo-ficticio',str(ev))
 
     def test_cadastro_inconclusivo_nao_alega_inexistencia(self):

@@ -793,6 +793,7 @@ class Aplicativo:
                         self.eventos.put(('hospital_iniciado',len(indices)))
                         erros_seguidos=0
                         hospital_suspenso=False
+                        pausa_tecnica=False
                         for j,idx in enumerate(indices,1):
                             if self.parar.is_set():break
                             while self.pausa.is_set() and not self.parar.wait(.25):pass
@@ -815,9 +816,13 @@ class Aplicativo:
                                 # Erro de gateway é indisponibilidade do serviço,
                                 # não ausência da AIH. Não emitir nova pesquisa.
                                 if servidor_indisponivel(contexto):
-                                    hospital_suspenso=True
-                                    self.eventos.put(('hospital_alerta',
-                                        'O SISREG apresentou falha de conexão. As consultas foram pausadas com segurança.'))
+                                    # Upstream/502/503 não é prova de sessão expirada.
+                                    # Sem reconexão nem CAPTCHA artificial; pausa a fila
+                                    # para evitar novas requisições a um servidor instável.
+                                    pausa_tecnica=True
+                                    self.eventos.put(('hospital_pausa_tecnica',
+                                        'O SISREG apresentou instabilidade. Dados salvos. '
+                                        'Quando normalizar, clique em Pesquisar solicitações hospitalares para continuar.'))
                                     break
                                 erros_seguidos+=1
                                 resultado=ResultadoHospital('FALHA_NAVEGACAO',
@@ -841,8 +846,26 @@ class Aplicativo:
                                 'PENDENCIA' if falha else 'OK',j,time.perf_counter()-inicio,categoria)))
                             self.eventos.put(('hospital_item',(idx,resultado,time.perf_counter()-inicio,j,len(indices))))
                             if erros_seguidos>=3:
-                                hospital_suspenso=True
-                                self.eventos.put(('hospital_alerta','Três falhas seguidas; lote hospitalar suspenso.'))
+                                # Um seletor fora do lugar ou paginação lenta não
+                                # comprova necessidade de reautenticação. Só abre
+                                # o diálogo humano com evidência de sessão ausente.
+                                try:
+                                    paginas_ativas=[pg for pg in contexto.pages
+                                        if not pg.is_closed() and endereco_oficial(pg.url)]
+                                    autenticada=any(autenticao_ativa(pg,timeout=2500)
+                                        for pg in paginas_ativas)
+                                except Exception:
+                                    autenticada=False
+                                if not autenticada:
+                                    hospital_suspenso=True
+                                    self.eventos.put(('hospital_alerta',
+                                        'A sessão não pôde ser confirmada. Verifique o SISREG no navegador.'))
+                                else:
+                                    pausa_tecnica=True
+                                    self.eventos.put(('hospital_pausa_tecnica',
+                                        'Três consultas tiveram falhas técnicas. A sessão continua ativa; '
+                                        'o processamento foi pausado para evitar resultados incorretos. '
+                                        'Você pode retomar a etapa hospitalar pelo botão de pesquisa.'))
                                 break
                             self.parar.wait(1.8)
                         # Não declarar fim nem finalizar relatório enquanto houver
@@ -851,6 +874,10 @@ class Aplicativo:
                             self.eventos.put(('hospital_suspenso',len(indices)))
                             if not self._esperar_intervencao(contexto,'hospital'):
                                 return
+                        elif pausa_tecnica and not self.parar.is_set():
+                            # A thread permanece aberta para retomada pelo botão.
+                            # Não marcar como concluído e NÃO pedir login/captcha.
+                            self.eventos.put(('hospital_pausa',len(indices)))
                         elif not self.parar.is_set():
                             self.eventos.put(('hospital_fim',len(indices)))
                         else:
@@ -1211,6 +1238,18 @@ class Aplicativo:
                     self.barra_hospital.configure(value=100*contador/max(1,total))
                     self.progresso_hospital.set(f'{contador}/{total} consultadas · última: {rotulo_situacao(reg.situacao)} · '
                                                f'{self._duracao(duracao)} nesta AIH')
+                elif evento=='hospital_pausa_tecnica':
+                    self.status.set(str(dado))
+                    self.estatisticas.diagnosticar('HOSPITAL_PAUSA_TECNICA','PENDENCIA',
+                                                  categoria='FALHA_NAVEGACAO')
+                elif evento=='hospital_pausa':
+                    self.navegacao_falhou=True
+                    self._salvar_checkpoint()
+                    self.processando=False
+                    self.btn_hospital.configure(state='normal')
+                    self._resumir_historico()
+                    self._atualizar_avanco()
+                    # Retomada permitida com sessão ativa, sem modal de CAPTCHA.
                 elif evento=='hospital_suspenso':
                     # Um lote pausado NÃO concluiu a auditoria. Salva o trabalho
                     # e aguarda a pessoa, mantendo a possibilidade de retomar.

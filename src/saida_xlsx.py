@@ -92,6 +92,8 @@ def situacao_final(registro) -> str:
             return 'Procedimento divergente — revisão fiscal'
         if any(x in motivo for x in ('CARATER_CONFLITANTE','AUTORIZADOR_CONFLITANTE')):
             return 'Dados divergentes no SISREG'
+        if 'AIH_NAO_LOCALIZADA_PAGINAS' in motivo:
+            return 'AIH não encontrada após pesquisar todas as páginas — revisar'
         if 'FICHA_NAO_ABERTA' in motivo:
             return 'Ficha da AIH não aberta — repetir consulta'
         if any(x in motivo for x in ('CAMPOS_FICHA_', 'FALHA_NAVEGACAO', 'TIMEOUT')):
@@ -117,6 +119,7 @@ def situacao_final(registro) -> str:
 
 ORIENTACOES_FISCAIS = {
     'Consulta sem divergências': 'Automação não identificou divergência nos campos consultados. Não representa atesto; aplicar o procedimento normal de fiscalização.',
+    'AIH não encontrada após pesquisar todas as páginas — revisar': 'A busca percorreu as páginas de resultados disponíveis para o CNS, mas a AIH não apareceu; conferir filtros e competência no SISREG antes de qualquer conclusão fiscal.',
     'Aguardando consulta hospitalar': 'Consulta de internação ainda não executada ou não concluída. Retomar a etapa 3 antes de avaliar a produção.',
     'Aguardando consulta SISREG': 'Cadastro ainda não pesquisado. Prosseguir com a etapa 2.',
     'Não encontrado no espelho de AIH': 'Conferir AIH e competência do PDF recebido; verificar o espelho em fonte institucional antes de concluir ausência.',

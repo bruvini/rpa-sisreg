@@ -52,6 +52,12 @@ def candidato_hospitalar(registro) -> bool:
         return False
     if registro.situacao.startswith(('CNS_CONFLITO','CPF_CONFLITANTE','ESPELHOS_CONFLITANTES')):
         return False
-    if getattr(registro, 'consulta_hospitalar', '') in ('FICHA_CONFERIDA','PROCEDIMENTO_DIVERGENTE'):
+    if getattr(registro, 'consulta_hospitalar', '') in (
+            'FICHA_CONFERIDA','PROCEDIMENTO_DIVERGENTE','AIH_NAO_LOCALIZADA_PAGINAS'):
+        return False
+    # A busca paginada esgotada é caso para fiscalização, não nova pesquisa
+    # automática a cada login. Paginação quebrada permanece recuperável.
+    if getattr(registro, 'situacao_anterior', '') == (
+            'AIH não encontrada após pesquisar todas as páginas — revisar'):
         return False
     return not ficha_hospitalar_completa(registro)

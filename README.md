@@ -1,6 +1,6 @@
 # RPA SISREG — Conferência automatizada de internações
 
-![Versão](https://img.shields.io/badge/vers%C3%A3o-0.7.7-07436b) ![Python](https://img.shields.io/badge/Python-3.12-3776AB) ![Licença](https://img.shields.io/badge/c%C3%B3digo-MIT-555555)
+![Versão](https://img.shields.io/badge/vers%C3%A3o-0.7.9-07436b) ![Python](https://img.shields.io/badge/Python-3.12-3776AB) ![Licença](https://img.shields.io/badge/c%C3%B3digo-MIT-555555)
 
 > **A máquina executa o trabalho repetitivo; o fiscal analisa as exceções e toma a decisão.**
 
@@ -46,6 +46,20 @@ manualmente em PDFs e no SISREG. O código pode ser reutilizado sob os termos de
 A planilha hospitalar de entrada e o PDF são **somente leitura**. A cópia enriquecida
 é gerada automaticamente sem apagar o original. Na estação de trabalho, mantenha
 o Excel fechado enquanto o lote é processado.
+
+## Paginação hospitalar e diagnóstico da sessão (v0.7.9)
+
+- A consulta hospitalar agora **percorre as páginas** da lista por CNS, procurando a
+  AIH exata. Não utiliza linhas fixas, confirma o avanço e impede ciclos.
+- **AIH ausente após todas as páginas** é uma pendência para verificação fiscal,
+  não conclusão automática de inexistência. Se a paginação não avançar ou
+  mudar de estrutura, a consulta fica incompleta e é elegível para retomada.
+- Três falhas técnicas consecutivas em uma sessão autenticada geram **pausa
+  técnica**, sem falso pedido de CAPTCHA. Para retomar, use o botão já existente
+  de pesquisa hospitalar depois de verificar o estado do SISREG.
+- CAPTCHA verdadeiro ou autenticação não confirmada continuam exigindo intervenção
+  manual, sem automação nem contorno da proteção. Eventos técnicos permanecem sem
+  identificadores dos pacientes. Consulte [GUIA_v079.md](GUIA_v079.md).
 
 ## Retomada e resiliência (v0.7.5)
 

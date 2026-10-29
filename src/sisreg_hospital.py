@@ -7,6 +7,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import re
 import time
+import hashlib
 from aih_extract import normalizar_aih, digitos
 from sisreg_navigation import origem_autorizada, _encontrar, NavegacaoInesperada
 
@@ -20,6 +21,13 @@ CARATER = 'xpath=//*[@id="fichaInternacao"]/table/tbody/tr[44]/td[1]'
 CODIGO_SOLICITACAO = 'xpath=//*[@id="fichaInternacao"]/table/tbody/tr[1]/td[1]/b'
 # Sem seletor independente validado, não inferir o código autorizador.
 PROCEDIMENTO = 'xpath=//*[@id="fichaInternacao"]/table/tbody/tr[48]/td[2]'
+PAGINADOR_PROXIMO = '#main_page > form > center:nth-child(9) > table > tbody > tr > td > a > img'
+MAX_PAGINAS_RESULTADO = 100
+
+
+class AIHNaoEncontrada(Exception):
+    """Busca completa nas páginas disponíveis; não comprova inexistência no SISREG."""
+
 
 
 @dataclass(frozen=True)
@@ -93,45 +101,133 @@ def pesquisar_por_cns(pagina, cns: str):
     botao.click(timeout=14000, no_wait_after=True)
 
 
-def selecionar_linha_aih(pagina, aih: str, espera_ms: int = 15000):
-    """Seleciona APENAS uma linha cujo TD contém AIH exata (hífen ignorado).
+def _ler_tabela_de_resultados(pagina):
+    """Lê só a lista de resultados em quadros do domínio oficial.
 
-    Nunca escolhe tr[4], outro paciente ou primeira linha por conveniência.
+    O fingerprint é efêmero e nunca vai para logs (nem é persistido).
+    """
+    for frame in _quadros_oficiais(pagina):
+        try:
+            trs = frame.locator('#main_page table tr')
+            n = min(trs.count(), 750)
+            linhas = []
+            for i in range(n):
+                tr = trs.nth(i)
+                celulas = tr.locator('td')
+                if celulas.count() < 4:
+                    continue
+                textos = tuple(v.strip() for v in celulas.all_inner_texts())
+                # O formulário de pesquisa também possui tabelas; só considerar
+                # a tabela de solicitações se a linha contiver uma AIH de 13 dígitos.
+                if any(normalizar_aih(v) for v in textos):
+                    linhas.append((tr, textos))
+            if linhas:
+                assinatura = hashlib.sha256(repr([t for _, t in linhas]).encode('utf-8')).hexdigest()
+                return frame, linhas, assinatura
+        except Exception:
+            continue
+    return None, [], None
+
+
+def _link_proxima_pagina(frame):
+    """Reconhece a flecha do SISREG; não clica em voltar ou em paginação ambígua."""
+    try:
+        imagens = frame.locator(PAGINADOR_PROXIMO)
+        qtd = imagens.count()
+    except Exception as exc:
+        raise NavegacaoInesperada('Não foi possível verificar a paginação.') from exc
+    if not qtd:
+        return None
+    candidatas = []
+    for i in range(min(qtd, 12)):
+        img = imagens.nth(i)
+        try:
+            if not img.is_visible():
+                continue
+            link = img.locator('xpath=..')
+            if not link.is_visible() or not link.is_enabled():
+                continue
+            texto = ' '.join((img.get_attribute(k) or '') for k in ('alt','title','src'))
+            texto += ' ' + ' '.join((link.get_attribute(k) or '') for k in ('title','aria-label','class'))
+            texto = texto.lower()
+            if any(k in texto for k in ('anterior','previous','prev','voltar','left','esquerda','disabled','inativo')):
+                continue
+            explicito = any(k in texto for k in ('próxim','proxim','next','avanç','avanc','right','direita'))
+            candidatas.append((link, explicito))
+        except Exception as exc:
+            raise NavegacaoInesperada('Controle de paginação inesperado.') from exc
+    explicitas = [link for link, exp in candidatas if exp]
+    if len(explicitas) == 1:
+        return explicitas[0]
+    if len(candidatas) == 1 and qtd == 1:
+        # O seletor fornecido aponta diretamente para a flecha seguinte.
+        return candidatas[0][0]
+    if candidatas:
+        raise NavegacaoInesperada('Paginação ambígua; não foi possível determinar a próxima página.')
+    return None
+
+
+def selecionar_linha_aih(pagina, aih: str, espera_ms: int = 15000, observador=None):
+    """Busca AIH exata em TODAS as páginas acessíveis de resultados.
+
+    Sem próximo link, só conclui ausência após visitar a última página.
+    Se não for possível confirmar avanço/última página, deixa pendência técnica.
     """
     procurada = normalizar_aih(aih)
     if not procurada:
         raise NavegacaoInesperada('AIH inválida para pesquisa hospitalar.')
     fim = time.monotonic() + espera_ms / 1000
+    frame = None
+    linhas = []
+    assinatura = None
     while time.monotonic() < fim:
-        encontrados = []
-        for frame in _quadros_oficiais(pagina):
-            try:
-                trs = frame.locator('#main_page table tr')
-                n = min(trs.count(), 750)
-                for i in range(n):
-                    tr = trs.nth(i)
-                    celulas = tr.locator('td')
-                    if celulas.count() < 4:
-                        continue
-                    textos = [v.strip() for v in celulas.all_inner_texts()]
-                    posicoes = [j for j, v in enumerate(textos) if normalizar_aih(v) == procurada]
-                    if len(posicoes) == 1:
-                        encontrados.append((tr, posicoes[0]))
-            except Exception:
-                continue
-        if len(encontrados) == 1:
-            tr, pos = encontrados[0]
-            td = tr.locator('td')
-            # Se a AIH estiver clicável, usa esse TD; alguns layouts usam TD6.
-            alvo = td.nth(pos)
-            if not alvo.is_visible():
-                raise NavegacaoInesperada('AIH encontrada, mas célula não está visível.')
-            alvo.click(timeout=12000, no_wait_after=True)
-            return
-        if len(encontrados) > 1:
-            raise NavegacaoInesperada('AIH aparece em mais de uma linha; não foi aberta automaticamente.')
+        frame, linhas, assinatura = _ler_tabela_de_resultados(pagina)
+        if linhas:
+            break
         time.sleep(.35)
-    raise NavegacaoInesperada('AIH não localizada de modo inequívoco na tabela consultada.')
+    if not linhas:
+        raise NavegacaoInesperada('Tabela de resultados não disponível; busca inconclusiva.')
+    visitadas = set()
+    for numero_pagina in range(1, MAX_PAGINAS_RESULTADO + 1):
+        if assinatura in visitadas:
+            raise NavegacaoInesperada('Paginação repetida; não foi possível concluir a busca.')
+        visitadas.add(assinatura)
+        encontrados = []
+        for tr, textos in linhas:
+            posicoes = [j for j,v in enumerate(textos) if normalizar_aih(v) == procurada]
+            if len(posicoes) == 1:
+                encontrados.append((tr,posicoes[0]))
+        if len(encontrados) > 1:
+            raise NavegacaoInesperada('AIH repetida na página; não foi aberta automaticamente.')
+        if len(encontrados) == 1:
+            tr,pos=encontrados[0]
+            alvo=tr.locator('td').nth(pos)
+            if not alvo.is_visible():
+                raise NavegacaoInesperada('Célula da AIH encontrada não está visível.')
+            alvo.click(timeout=12000,no_wait_after=True)
+            return
+        if observador:
+            observador('PAGINA_RESULTADOS','OK',0.0,'NENHUM')
+        proxima = _link_proxima_pagina(frame)
+        if proxima is None:
+            raise AIHNaoEncontrada('AIH não encontrada nas páginas de resultados consultadas.')
+        try:
+            origem_autorizada(frame)
+            proxima.click(timeout=12000,no_wait_after=True)
+        except Exception as exc:
+            raise NavegacaoInesperada('Não foi possível avançar a página de resultados.') from exc
+        limite = time.monotonic() + 12
+        atualizada = False
+        while time.monotonic() < limite:
+            novo_frame, novas_linhas, nova_assinatura = _ler_tabela_de_resultados(pagina)
+            if novas_linhas and nova_assinatura != assinatura:
+                frame, linhas, assinatura = novo_frame, novas_linhas, nova_assinatura
+                atualizada = True
+                break
+            time.sleep(.3)
+        if not atualizada:
+            raise NavegacaoInesperada('Página seguinte não foi confirmada; busca inconclusiva.')
+    raise NavegacaoInesperada('Limite de páginas alcançado; busca inconclusiva.')
 
 
 def obter_detalhes(pagina, aih: str, procedimento_hospital: str = '') -> ResultadoHospital:
@@ -171,11 +267,17 @@ def consultar_solicitacao_hospitalar(pagina, cns: str, aih: str,
     """Consulta por etapas, com telemetria restrita a códigos SEM dados de pacientes."""
     for acao, funcao in (
         ('BUSCA_HOSPITALAR', lambda: pesquisar_por_cns(pagina, cns)),
-        ('AIH_EXATA', lambda: selecionar_linha_aih(pagina, aih)),
+        ('AIH_EXATA', lambda: selecionar_linha_aih(pagina, aih, observador=observador)),
         ('LEITURA_FICHA', lambda: obter_detalhes(pagina, aih, procedimento))):
         inicio = time.perf_counter()
         try:
             resultado = funcao()
+        except AIHNaoEncontrada:
+            resultado = ResultadoHospital('AIH_NAO_LOCALIZADA_PAGINAS',
+                'AIH não encontrada após percorrer as páginas disponíveis; confirmar em consulta oficial.')
+            if observador:
+                observador(acao, 'PENDENCIA', time.perf_counter()-inicio, 'AIH_NAO_LOCALIZADA_PAGINAS')
+            return resultado
         except Exception:
             if observador:
                 observador(acao, 'ERRO', time.perf_counter()-inicio,

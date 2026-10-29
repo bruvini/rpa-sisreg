@@ -23,6 +23,7 @@ ESTADOS = {
     'PENDENTE_PROCEDIMENTO_DIVERGENTE': 'Procedimento divergente — revisão fiscal',
     'PENDENTE_PROCEDIMENTO_NAO_CONFIRMADO': 'Procedimento não confirmado — consultar ficha',
     'PENDENTE_FICHA_NAO_ABERTA': 'Ficha da AIH não aberta — repetir consulta',
+    'PENDENTE_AIH_NAO_LOCALIZADA_PAGINAS': 'AIH não encontrada nas páginas consultadas — revisar',
     'PENDENTE_CAMPOS_FICHA_INCOMPLETOS': 'Dados da ficha incompletos — repetir consulta',
     'PENDENTE_CAMPOS_FICHA_NAO_CONFIRMADOS': 'Campos não localizados na ficha — repetir consulta',
     'PENDENTE_FALHA_NAVEGACAO': 'Falha técnica no SISREG — repetir consulta',
