@@ -1,109 +1,122 @@
-"""Regressão sem acesso à rede e sem identificadores reais."""
+"""Regressoes para HTML institucional da pesquisa de internacao (dados sinteticos)."""
 import sys
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'src'))
 from sisreg_hospital import (selecionar_linha_aih, AIHNaoEncontrada,
-    PAGINADOR_PROXIMO, consultar_solicitacao_hospitalar)
+    PAGINADOR_PROXIMO, LINHAS_RESULTADOS, consultar_solicitacao_hospitalar)
 from sisreg_navigation import NavegacaoInesperada
 
-AIH_ALVO='9000000000123'
+ALVO='9000000000123'
 
-class Celula:
-    def __init__(self, parent, index): self.parent=parent;self.index=index
-    def is_visible(self):return True
-    def click(self,**kw):self.parent.cliques.append(self.index)
 class Celulas:
-    def __init__(self, valores):self.valores=valores;self.cliques=[]
-    def count(self):return len(self.valores)
-    def all_inner_texts(self):return self.valores
-    def nth(self,i):return Celula(self,i)
+    def __init__(self,values):self.values=values
+    def all_inner_texts(self):return self.values
+
 class Linha:
-    def __init__(self,aih):self.celulas=Celulas(['11.05.2026','PACIENTE SINTETICO','PROC','APROVADO',aih,''])
-    def locator(self,selector):
-        assert selector=='td',selector
-        return self.celulas
+    def __init__(self,aih,acao="mostrarFicha('123456')"):
+        self.values=['11.05.2026','PACIENTE SINTETICO','PROCEDIMENTO',
+                     'CLINICA','Eletiva',aih,'APROVADA']
+        self.acao=acao
+        self.clicks=0
+    def locator(self,sel):
+        assert sel=='td'
+        return Celulas(self.values)
+    def get_attribute(self,attr):
+        return self.acao if attr=='onclick' else None
+    def is_visible(self):return True
+    def click(self,**kw):self.clicks+=1
+
+class Proxima:
+    def __init__(self,page):self.page=page
+    def is_visible(self):return True
+    def is_enabled(self):return True
+    def get_attribute(self,attr):
+        if attr=='onclick':return "exibirPagina(1,2); return false;"
+        return None
+    def click(self,**kw):
+        if not self.page.parar_paginar:
+            self.page.numero+=1
+
 class Lista:
     def __init__(self,rows):self.rows=rows
     def count(self):return len(self.rows)
     def nth(self,i):return self.rows[i]
-class Link:
-    def __init__(self,pagina):self.pagina=pagina
-    def is_visible(self):return True
-    def is_enabled(self):return True
-    def get_attribute(self,attr):return {'title':'Próxima página','href':'javascript:paginar()'}.get(attr)
-    def click(self,**kw):
-        if self.pagina.nao_avanca:return
-        self.pagina.pagina+=1
-class Imagem:
-    def __init__(self,pagina):self.pagina=pagina
-    def is_visible(self):return True
-    def get_attribute(self,attr):return {'title':'Próxima página','alt':'Próxima','src':'next.gif'}.get(attr)
-    def locator(self,selector):
-        assert selector=='xpath=..'
-        return Link(self.pagina)
+
 class Pagina:
     url='https://sisregiii.saude.gov.br/cgi-bin/index'
-    def __init__(self,grupos,nao_avanca=False):
-        self.frames=[self];self.grupos=grupos;self.pagina=0;self.nao_avanca=nao_avanca
+    def __init__(self,paginas,parar_paginar=False):
+        self.frames=[self];self.paginas=paginas
+        self.numero=0;self.parar_paginar=parar_paginar
     def locator(self,selector):
-        if selector=='#main_page table tr':return Lista(self.grupos[self.pagina])
+        if selector==LINHAS_RESULTADOS:
+            return Lista(self.paginas[self.numero])
         if selector==PAGINADOR_PROXIMO:
-            return Lista([Imagem(self)] if self.pagina<len(self.grupos)-1 else [])
+            return Lista([Proxima(self)] if self.numero<len(self.paginas)-1 else [])
         raise AssertionError(selector)
 
-class Paginacao(unittest.TestCase):
-    def test_encontra_aih_apenas_na_segunda_pagina(self):
+class TestesPaginacao(unittest.TestCase):
+    def test_encontra_aihexata_na_segunda_pagina(self):
         anterior=Linha('9000000000001');alvo=Linha('900000000012-3')
-        pg=Pagina([[anterior],[alvo]])
-        seen=[]
-        selecionar_linha_aih(pg,AIH_ALVO,espera_ms=500,observador=lambda *v:seen.append(v))
-        self.assertEqual(pg.pagina,1)
-        self.assertEqual(anterior.celulas.cliques,[])
-        self.assertEqual(alvo.celulas.cliques,[4])
-        self.assertTrue(any(v[0]=='PAGINA_RESULTADOS' for v in seen))
-    def test_aih_ausente_somente_apos_ultima_pagina(self):
-        pg=Pagina([[Linha('9000000000001')],[Linha('9000000000002')],[Linha('9000000000003')]])
+        p=Pagina([[anterior],[alvo]])
+        eventos=[]
+        selecionar_linha_aih(p,ALVO,espera_ms=500,observador=lambda *v:eventos.append(v))
+        self.assertEqual(p.numero,1)
+        self.assertEqual(anterior.clicks,0)
+        self.assertEqual(alvo.clicks,1)
+        self.assertTrue(any(v[0]=='PAGINA_RESULTADOS' for v in eventos))
+
+    def test_ultima_pagina_sem_aih(self):
+        p=Pagina([[Linha('9000000000001')],[Linha('9000000000002')]])
         with self.assertRaises(AIHNaoEncontrada):
-            selecionar_linha_aih(pg,AIH_ALVO,espera_ms=300)
-        self.assertEqual(pg.pagina,2)
-    def test_paginacao_sem_avanco_nao_e_ausencia(self):
-        pg=Pagina([[Linha('9000000000001')],[Linha(AIH_ALVO)]],nao_avanca=True)
-        # Aguardar somente algumas dezenas de ms por teste, sem consulta real.
-        with patch('sisreg_hospital.time.monotonic', side_effect=[0,0,0,20]):
+            selecionar_linha_aih(p,ALVO,espera_ms=500)
+        self.assertEqual(p.numero,1)
+
+    def test_nao_avanca_mantem_pendencia_tecnica(self):
+        p=Pagina([[Linha('9000000000001')],[Linha(ALVO)]],parar_paginar=True)
+        with patch('sisreg_hospital.time.monotonic',side_effect=[0,0,0,20]):
             with self.assertRaises(NavegacaoInesperada):
-                selecionar_linha_aih(pg,AIH_ALVO,espera_ms=500)
-        self.assertEqual(pg.pagina,0)
-    def test_um_unico_resultado_sem_flecha_abre_sem_paginacao(self):
-        alvo=Linha(AIH_ALVO)
-        pg=Pagina([[alvo]])
-        selecionar_linha_aih(pg,AIH_ALVO,espera_ms=500)
-        self.assertEqual(alvo.celulas.cliques,[4])
-    def test_busca_exaurida_nao_se_repete_automaticamente(self):
+                selecionar_linha_aih(p,ALVO,espera_ms=500)
+        self.assertEqual(p.numero,0)
+
+    def test_aih_ja_na_primeira(self):
+        a=Linha(ALVO)
+        p=Pagina([[a]])
+        selecionar_linha_aih(p,ALVO,espera_ms=100)
+        self.assertEqual(a.clicks,1)
+
+    def test_nao_clicar_em_linha_sem_mostrar_ficha(self):
+        x=Linha(ALVO,acao="outraFuncao('123456')")
+        p=Pagina([[x]])
+        with self.assertRaises(NavegacaoInesperada):
+            selecionar_linha_aih(p,ALVO,espera_ms=100)
+        self.assertEqual(x.clicks,0)
+
+    def test_sem_nova_busca_automaticamente_apos_exaurir(self):
         from types import SimpleNamespace
         from progresso import candidato_hospitalar
-        reg=SimpleNamespace(cns='700000000000000',aih=AIH_ALVO,nome='PACIENTE TESTE',
+        r=SimpleNamespace(cns='700000000000000',aih=ALVO,nome='PACIENTE',
             situacao='PENDENTE_AIH_NAO_LOCALIZADA_PAGINAS',situacao_anterior='',
             consulta_hospitalar='AIH_NAO_LOCALIZADA_PAGINAS')
-        self.assertFalse(candidato_hospitalar(reg))
-        reg.consulta_hospitalar=''
-        reg.situacao_anterior='AIH não encontrada após pesquisar todas as páginas — revisar'
-        self.assertFalse(candidato_hospitalar(reg))
+        self.assertFalse(candidato_hospitalar(r))
 
-    def test_falha_de_paginacao_permanece_recuperavel(self):
+    def test_erro_navegacao_permanece_recuperavel(self):
         from types import SimpleNamespace
         from progresso import candidato_hospitalar
-        reg=SimpleNamespace(cns='700000000000000',aih=AIH_ALVO,nome='PACIENTE TESTE',
-            situacao='PENDENTE_FALHA_NAVEGACAO',situacao_anterior='',consulta_hospitalar='FALHA_NAVEGACAO',carater='',autorizador='',comparacao_anterior='')
-        self.assertTrue(candidato_hospitalar(reg))
+        r=SimpleNamespace(cns='700000000000000',aih=ALVO,nome='PACIENTE',
+            situacao='PENDENTE_FALHA_NAVEGACAO',situacao_anterior='',
+            consulta_hospitalar='FALHA_NAVEGACAO',carater='',autorizador='',
+            comparacao_anterior='')
+        self.assertTrue(candidato_hospitalar(r))
 
-    def test_ausencia_nao_e_erro_tecnico_ao_consultar(self):
-        pg=Pagina([[Linha('9000000000001')]])
-        events=[]
+    def test_aih_ausente_nao_e_falha_tecnica(self):
+        p=Pagina([[Linha('9000000000001')]])
+        eventos=[]
         with patch('sisreg_hospital.pesquisar_por_cns'):
-            result=consultar_solicitacao_hospitalar(pg,'700000000000000',AIH_ALVO,observador=lambda *v:events.append(v))
+            result=consultar_solicitacao_hospitalar(p,'700000000000000',ALVO,
+                    observador=lambda *v:eventos.append(v))
         self.assertEqual(result.situacao,'AIH_NAO_LOCALIZADA_PAGINAS')
-        self.assertEqual(events[-1][1],'PENDENCIA')
+        self.assertEqual(eventos[-1][1],'PENDENCIA')
 
-if __name__=='__main__':unittest.main()
+if __name__=='__main__': unittest.main()

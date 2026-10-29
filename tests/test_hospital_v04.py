@@ -91,47 +91,48 @@ class TesteGravacaoNaOrigem(unittest.TestCase):
 
 if __name__=='__main__':unittest.main()
 
-class _Celulas:
-    def __init__(self, valores):self.valores=valores;self.clicks=[]
-    def count(self):return len(self.valores)
-    def all_inner_texts(self):return self.valores
-    def nth(self,i):return _Celula(self,i)
-class _Celula:
-    def __init__(self,grupo,i):self.grupo=grupo;self.i=i
-    def is_visible(self):return True
-    def click(self,**kwargs):self.grupo.clicks.append(self.i)
 class _Linha:
-    def __init__(self,valores):self.tds=_Celulas(valores)
-    def locator(self,selector):return self.tds
+    def __init__(self,valores):
+        self.valores=valores
+        self.cliques=0
+    def locator(self,selector):
+        assert selector=='td'
+        return _Celulas(self.valores)
+    def get_attribute(self,attr):
+        return "mostrarFicha('123456')" if attr=='onclick' else None
+    def is_visible(self):return True
+    def click(self,**kwargs):self.cliques+=1
+class _Celulas:
+    def __init__(self,valores):self.valores=valores
+    def all_inner_texts(self):return self.valores
 class _Lista:
-    def __init__(self,itens):self.itens=itens
-    def count(self):return len(self.itens)
-    def nth(self,i):return self.itens[i]
+    def __init__(self,rows):self.rows=rows
+    def count(self):return len(self.rows)
+    def nth(self,i):return self.rows[i]
 class _Pagina:
     url='https://sisregiii.saude.gov.br/cgi-bin/index'
     def __init__(self,linhas):self.frames=[self];self.linhas=linhas
     def locator(self,selector):
-        if selector=='#main_page table tr':return _Lista(self.linhas)
+        from sisreg_hospital import LINHAS_RESULTADOS
+        if selector==LINHAS_RESULTADOS:return _Lista(self.linhas)
         raise AssertionError(selector)
 
 class TestesSelecaoExataAIH(unittest.TestCase):
-    def test_abre_aihexata_nao_primeira_linha(self):
-        r1=_Linha(['12.05.2026','ANA','PROCEDIMENTO','APROVADO','000000000000-1','OUTRO'])
-        r2=_Linha(['12.05.2026','BRUNA','PROCEDIMENTO','APROVADO','000000000000-2','OUTRO'])
-        r3=_Linha(['12.05.2026','CARLA','PROCEDIMENTO','APROVADO','900000000012-3','OUTRO'])
-        selecionar_linha_aih(_Pagina([r1,r2,r3]),'9000000000123',espera_ms=100)
-        self.assertEqual(r1.tds.clicks,[])
-        self.assertEqual(r2.tds.clicks,[])
-        self.assertEqual(r3.tds.clicks,[4])
+    def test_abre_aih_exata_ao_clicar_na_linha(self):
+        a=_Linha(['11.05.2026','PACIENTE 1','PROC','CLINICA','Eletiva','000000000000-1','APROVADA'])
+        b=_Linha(['11.05.2026','PACIENTE 2','PROC','CLINICA','Eletiva','900000000012-3','APROVADA'])
+        selecionar_linha_aih(_Pagina([a,b]),'9000000000123',espera_ms=100)
+        self.assertEqual(a.cliques,0)
+        self.assertEqual(b.cliques,1)
 
-    def test_aih_repetida_bloqueia_abertura(self):
-        a=_Linha(['A','B','C','D','900000000012-3'])
-        b=_Linha(['A','B','C','D','9000000000123'])
+    def test_aih_repetida_bloqueia_clique(self):
+        a=_Linha(['11.05.2026','PACIENTE 1','PROC','CLINICA','Eletiva','900000000012-3','APROVADA'])
+        b=_Linha(['11.05.2026','PACIENTE 2','PROC','CLINICA','Eletiva','9000000000123','APROVADA'])
         from sisreg_navigation import NavegacaoInesperada
         with self.assertRaises(NavegacaoInesperada):
             selecionar_linha_aih(_Pagina([a,b]),'9000000000123',espera_ms=100)
-        self.assertEqual(a.tds.clicks,[])
-        self.assertEqual(b.tds.clicks,[])
+        self.assertEqual(a.cliques,0)
+        self.assertEqual(b.cliques,0)
 
 class _TextoLoc:
     def __init__(self,txt):self.txt=txt
