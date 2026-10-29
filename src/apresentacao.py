@@ -20,7 +20,12 @@ ESTADOS = {
     'CNS_CONFIRMADO_OPERADORA': 'CNS confirmado pela operadora',
     'CNS_CONFLITO_SISREG': 'CNS diferente do cadastro',
     'DADOS_COLETADOS_SEM_DIVERGENCIA': 'Sem divergência nos campos consultados',
-    'PENDENTE_PROCEDIMENTO_DIVERGENTE': 'Procedimento precisa de revisão',
+    'PENDENTE_PROCEDIMENTO_DIVERGENTE': 'Procedimento divergente — revisão fiscal',
+    'PENDENTE_PROCEDIMENTO_NAO_CONFIRMADO': 'Procedimento não confirmado — consultar ficha',
+    'PENDENTE_FICHA_NAO_ABERTA': 'Ficha da AIH não aberta — repetir consulta',
+    'PENDENTE_CAMPOS_FICHA_INCOMPLETOS': 'Dados da ficha incompletos — repetir consulta',
+    'PENDENTE_CAMPOS_FICHA_NAO_CONFIRMADOS': 'Campos não localizados na ficha — repetir consulta',
+    'PENDENTE_FALHA_NAVEGACAO': 'Falha técnica no SISREG — repetir consulta',
 }
 MOTIVOS = {
     'NOME_NAO_CONFIRMADO_RESULTADO': 'Não foi possível confirmar o nome no resultado',

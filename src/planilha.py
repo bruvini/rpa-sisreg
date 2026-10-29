@@ -53,6 +53,7 @@ class Registro:
     tempo_consulta: float = 0.0
     solicitacao: str = ''
     situacao_anterior: str = ''  # Texto de H da planilha anterior, sem persistência extra.
+    comparacao_anterior: str = ''  # Resultado de J já salvo; não supor conformidade por F/G.
 
 
 class SessaoPlanilha:
@@ -81,7 +82,7 @@ class SessaoPlanilha:
                 cab = tuple(valor_texto(c.value) for c in ws[1][:7])
                 if cab != COLUNAS:
                     raise ValueError(f'Cabeçalhos incorretos na aba {aba}. Use o modelo padrão, linha 1.')
-                for n, linha in enumerate(ws.iter_rows(min_row=2, max_col=8, values_only=True), 2):
+                for n, linha in enumerate(ws.iter_rows(min_row=2, max_col=10, values_only=True), 2):
                     if not any(v is not None and valor_texto(v) for v in linha):
                         continue
                     campos = [valor_texto(v) for v in linha[:7]]
@@ -89,7 +90,8 @@ class SessaoPlanilha:
                     r = Registro(aba, n, campos[0], aih, campos[2], campos[3],
                                  campos[4], campos[5], campos[6],
                                  cpf_origem=campos[3], cns_origem=campos[4],
-                                 situacao_anterior=valor_texto(linha[7]) if len(linha)>7 else '')
+                                 situacao_anterior=valor_texto(linha[7]) if len(linha)>7 else '',
+                                 comparacao_anterior=valor_texto(linha[9]) if len(linha)>9 else '')
                     if not aih:
                         r.situacao = 'AIH_FORMATO_INVALIDO'
                         r.detalhe = 'AIH deve ter 13 dígitos. Corrigir na origem.'
@@ -106,10 +108,15 @@ class SessaoPlanilha:
                         r.detalhe = 'CNS deve possuir 15 dígitos; não sobrescrito.'
                     # Reaproveita uma ficha já coletada pelo próprio XLSX anterior:
                     # não precisa repetir consultas hospitalares completas.
-                    if (r.situacao_anterior == 'Consulta sem divergências'
-                            and cns_formato(r.cns) and r.carater and r.autorizador):
-                        r.consulta_hospitalar = 'FICHA_CONFERIDA'
-                        r.situacao = 'DADOS_COLETADOS_SEM_DIVERGENCIA'
+                    from progresso import ficha_hospitalar_completa
+                    if ficha_hospitalar_completa(r):
+                        r.consulta_hospitalar = ('FICHA_CONFERIDA' if
+                            r.comparacao_anterior == 'Compatível' else 'PROCEDIMENTO_DIVERGENTE')
+                        r.situacao = ('DADOS_COLETADOS_SEM_DIVERGENCIA' if
+                            r.comparacao_anterior == 'Compatível' else 'PENDENTE_PROCEDIMENTO_DIVERGENTE')
+                    elif (r.situacao_anterior == 'Consulta sem divergências'
+                          and r.carater and r.autorizador):
+                        r.situacao = 'PENDENTE_PROCEDIMENTO_NAO_CONFIRMADO'
                     self.registros.append(r)
         finally:
             wb.close()
@@ -207,6 +214,11 @@ class SessaoPlanilha:
         contagem: dict[str, int] = {}
         for indice, r in enumerate(self.registros, 1):
             try:
+                # A presença de CPF na fonte ou na cópia anterior significa que
+                # a extração pelo PDF já foi realizada. Não repetir o cruzamento.
+                # Formatos inválidos permanecem como pendência, sem substituição.
+                if r.cpf:
+                    continue
                 if not r.aih or not r.nome:
                     continue
                 e, resultado = escolher_espelho(index.get(r.aih, []), r.nome)
@@ -263,6 +275,9 @@ class SessaoPlanilha:
         registro.consulta_hospitalar = resultado.situacao
         registro.atualizado_em = datetime.now().isoformat(timespec='seconds')
         registro.procedimento_sisreg = resultado.procedimento or ''
+        if resultado.procedimento:
+            # Novo resultado substitui eventual marcação histórica de "Não conferido".
+            registro.comparacao_anterior = ''
         # Solicitação é vinculada somente quando há AIH exata e ficha confirmada.
         if resultado.situacao in ('FICHA_CONFERIDA', 'PROCEDIMENTO_DIVERGENTE'):
             registro.solicitacao = resultado.solicitacao or ''
@@ -276,7 +291,8 @@ class SessaoPlanilha:
             conflitos.append('CARATER_CONFLITANTE')
         # Comparar autorizador somente quando as DUAS fontes o informam.
         # O Código Solicitação da ficha é outro campo, não autorização.
-        if resultado.autorizador and registro.autorizador and registro.autorizador != resultado.autorizador:
+        codigo_ficha = resultado.autorizador or resultado.solicitacao
+        if codigo_ficha and registro.autorizador and registro.autorizador != codigo_ficha:
             conflitos.append('AUTORIZADOR_CONFLITANTE')
         if conflitos:
             registro.situacao = 'PENDENTE_' + '_'.join(conflitos)
@@ -285,7 +301,7 @@ class SessaoPlanilha:
         if not registro.carater:
             registro.carater = resultado.carater
         if not registro.autorizador:
-            registro.autorizador = resultado.autorizador
+            registro.autorizador = codigo_ficha
         registro.situacao = ('PENDENTE_PROCEDIMENTO_DIVERGENTE'
                              if resultado.situacao == 'PROCEDIMENTO_DIVERGENTE'
                              else 'DADOS_COLETADOS_SEM_DIVERGENCIA')

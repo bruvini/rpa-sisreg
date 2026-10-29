@@ -18,7 +18,7 @@ def reg(st):
                     '11144477735','900000000000001','','',situacao=st)
 
 class TesteSituacoes(unittest.TestCase):
-    def test_versao(self): self.assertEqual(APP_VERSION,'0.7.7')
+    def test_versao(self): self.assertEqual(APP_VERSION,'0.7.8')
     def test_nao_encontrado_no_pdf(self):
         self.assertEqual(situacao_final(reg('AIH_AUSENTE_NO_PDF')),'Não encontrado no espelho de AIH')
     def test_dados_divergentes_pdf(self):
@@ -30,11 +30,11 @@ class TesteSituacoes(unittest.TestCase):
     def test_aih_nao_confirmada(self):
         self.assertEqual(situacao_final(reg('PENDENTE_AIH_NAO_COMPROVADA_FICHA')),'AIH não confirmada na consulta — revisar')
     def test_dados_divergentes_sisreg(self):
-        self.assertEqual(situacao_final(reg('PENDENTE_PROCEDIMENTO_DIVERGENTE')),'Dados divergentes no SISREG')
+        self.assertEqual(situacao_final(reg('PENDENTE_PROCEDIMENTO_DIVERGENTE')),'Procedimento divergente — revisão fiscal')
     def test_conferido_nao_equivale_atesto(self):
         self.assertEqual(situacao_final(reg('DADOS_COLETADOS_SEM_DIVERGENCIA')),'Consulta sem divergências')
     def test_timeout_nao_finge_aih_inexistente(self):
-        self.assertEqual(situacao_final(reg('PENDENTE_FALHA_NAVEGACAO')),'Consulta não concluída — revisão necessária')
+        self.assertEqual(situacao_final(reg('PENDENTE_FALHA_NAVEGACAO')),'Falha ou dados incompletos — repetir consulta')
     def test_cns_confirmado_ainda_nao_e_aih_conferida(self):
         self.assertIn('Aguardando',situacao_final(reg('CNS_CONFIRMADO_SISREG')))
     def test_procedimento_normalizado(self):

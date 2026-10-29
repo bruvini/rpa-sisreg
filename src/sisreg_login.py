@@ -20,7 +20,8 @@ from sisreg_navigation import (consultar_cadastro, ler_cadastro_contexto, autent
 from aih_extract import ler_espelhos_pdf, cpf_valido, cns_formato
 from planilha import SessaoPlanilha
 from retomada import SaudeLote, selecionar_cadastros
-from controle_sessao import AguardarHumano, desafio_visivel
+from progresso import resumo_progresso, candidato_hospitalar, ficha_hospitalar_completa
+from controle_sessao import AguardarHumano, desafio_visivel, servidor_indisponivel
 from sisreg_navigation import NavegacaoInesperada
 from sisreg_hospital import consultar_solicitacao_hospitalar, ResultadoHospital
 import threading
@@ -304,8 +305,9 @@ class Aplicativo:
         self.aviso_verificacao=ttk.Label(
             b,text='⚠ SISREG aguardando verificação humana. Resolva no navegador e confirme aqui.',
             foreground='#8a3500', font=('Segoe UI',11,'bold'),wraplength=1040)
-        self.btn_verificacao=ttk.Button(b,text='Já concluí a verificação no SISREG',
+        self.btn_verificacao=ttk.Button(b,text='Verificar sessão e retomar',
             command=self._confirmar_verificacao)
+        self.janela_verificacao=None
         # Estes controles somente aparecem quando o SISREG exigir intervenção.
 
         ttk.Label(b,text='A pesquisa começa automaticamente após o SISREG apresentar o menu de usuário autenticado.',
@@ -381,9 +383,8 @@ class Aplicativo:
         self.tabela_hospital.configure(yscrollcommand=barra_hosp.set)
         self.tabela_hospital.pack(side='left',fill='both',expand=True)
         barra_hosp.pack(side='right',fill='y')
-        ttk.Label(c,text='Conferência automatizada ≠ análise fiscal concluída. O tempo medido é real. A estimativa manual usa 15 segundos por AIH como premissa fixa '
-                  'e não comprova economia de trabalho. Não são alteradas '
-                  'solicitações no SISREG. Feche o Excel durante os lotes.',wraplength=920).pack(anchor='w',pady=(14,0))
+        ttk.Label(c,text='O RPA pesquisa e organiza os dados. A análise das pendências e a decisão final continuam com o fiscal. Mantenha o Excel fechado durante as consultas.',
+                  wraplength=920).pack(anchor='w',pady=(14,0))
         ttk.Label(d,text='Resultados da execução',font=('Segoe UI',16,'bold')).pack(anchor='w',pady=(3,3))
         ttk.Label(d,text='Resumo operacional · a decisão fiscal permanece humana',
                   foreground='#536b7d').pack(anchor='w',pady=(0,15))
@@ -471,8 +472,11 @@ class Aplicativo:
         # Somente o código de solicitação comprovado na ficha, nunca a AIH.
         estado = r.consulta_hospitalar
         referencia = r.solicitacao if r.solicitacao else '—'
-        return (r.aih, r.nome, r.cns, r.carater or '—',
-                r.procedimento_sisreg or 'Não coletado', referencia,
+        ficha_confirmada=estado in ('FICHA_CONFERIDA','PROCEDIMENTO_DIVERGENTE')
+        return (r.aih, r.nome, r.cns,
+                (r.carater or '—') if ficha_confirmada else '—',
+                (r.procedimento_sisreg or r.comparacao_anterior or '—') if ficha_confirmada else '—',
+                referencia if ficha_confirmada else '—',
                 rotulo_situacao(r.situacao) if estado else 'Aguardando consulta')
 
     def _atualizar_linha_hospital(self, indice):
@@ -552,13 +556,14 @@ class Aplicativo:
                 # Detectar layout legado antes da indexação cara do PDF.
                 sessao.validar_layout_para_saida()
                 tempos['planilha']=time.perf_counter()-t0
-                self.eventos.put(('preparo_fase', ('Planilha lida. Abrindo e indexando o PDF completo (etapa mais demorada)...',)))
+                pendentes_pdf=[i for i,r in enumerate(sessao.registros) if not r.cpf]
+                self.eventos.put(('preparo_fase', (f'Planilha lida. {len(pendentes_pdf)} CPFs ainda precisam de pesquisa no espelho.',)))
                 # Uma tabela provisória aparece imediatamente; nenhum widget Tk
                 # é acessado pela thread de processamento.
                 self.eventos.put(('preparo_inicio', [
-                    (i, self._linha_visual(r)) for i,r in enumerate(sessao.registros)]))
+                    (i, self._linha_visual(sessao.registros[i])) for i in pendentes_pdf]))
                 informacao='PDF não informado.'
-                if self.arquivo_pdf:
+                if self.arquivo_pdf and pendentes_pdf:
                     t0=time.perf_counter()
                     ix,avisos=ler_espelhos_pdf(self.arquivo_pdf)
                     tempos['indexacao_pdf']=time.perf_counter()-t0
@@ -566,14 +571,18 @@ class Aplicativo:
                     t0=time.perf_counter()
                     lote=[]
                     def ao_complementar(indice, registro, total):
+                        if registro.cpf_origem:
+                            return
                         lote.append((indice-1, self._linha_visual(registro)))
                         if len(lote) >= 8 or indice == total:
-                            self.eventos.put(('preparo_linhas', (lote[:],indice,total)))
+                            self.eventos.put(('preparo_linhas', (lote[:], min(indice,len(pendentes_pdf)),len(pendentes_pdf))))
                             lote.clear()
                     sessao.complementar_pdf(ix,self.arquivo_pdf,progresso=ao_complementar)
                     tempos['cruzamento']=time.perf_counter()-t0
-                    informacao=f'{len(ix)} AIHs indexadas no espelho.'
+                    informacao=f'{len(ix)} AIHs indexadas no espelho para complementar CPFs ausentes.'
                     if avisos: informacao+=' Estrutura do PDF requer revisão.'
+                elif self.arquivo_pdf:
+                    informacao='Todos os CPFs já estavam preenchidos; PDF não reprocessado.'
                 self.eventos.put(('preparo_fase', ('Cruzamento finalizado. Gravando a planilha de trabalho...',)))
                 t0=time.perf_counter()
                 analises, _logs = pastas_de_saida()
@@ -581,7 +590,7 @@ class Aplicativo:
                 gravacao=sessao.salvar_na_planilha(motivo='pdf')
                 tempos['gravacao']=time.perf_counter()-t0
                 self.eventos.put(('historico_preparacao', len(sessao.registros)))
-                self.eventos.put(('preparado',(sessao,informacao,gravacao,time.perf_counter()-self.inicio_preparo,tempos)))
+                self.eventos.put(('preparado',(sessao,informacao,gravacao,time.perf_counter()-self.inicio_preparo,tempos,len(pendentes_pdf))))
             except Exception as e:
                 # Não registrar str(e), paths ou valores do XLSX/PDF.
                 etapa='salvamento' if 'trabalho' in locals() else 'preparacao'
@@ -611,8 +620,10 @@ class Aplicativo:
             itens=tabela.get_children()
             if itens:tabela.delete(*itens)
         for i,r in enumerate(self.sessao.registros):
-            self._atualizar_linha_visual(i,self._linha_visual(r))
-            self._atualizar_linha_visual(i,self._linha_visual(r,com_cns=True),True)
+            if not r.cpf_origem:
+                self._atualizar_linha_visual(i,self._linha_visual(r))
+            if not r.cns_origem:
+                self._atualizar_linha_visual(i,self._linha_visual(r,com_cns=True),True)
 
     def _cns_totais(self):
         """Progresso acumulado do XLSX, independente do lote e de novo login."""
@@ -632,24 +643,47 @@ class Aplicativo:
         self.status.set('Aguardando verificação humana no navegador. Dados já coletados preservados.')
         self._evento_seguro('VERIFICACAO_HUMANA_EXIGIDA','geral')
         self.estatisticas.diagnosticar('VERIFICACAO_HUMANA_EXIGIDA','PENDENCIA',categoria='INTERVENCAO_HUMANA')
-        # Uma única janela nativa para chamar atenção; não ocorre em loop.
-        mensagem=('O SISREG exige uma verificação ou novo login.\n\n'
-                  'As consultas foram pausadas e o progresso foi salvo.\n'
-                  'Conclua o CAPTCHA ou login diretamente no Chrome/Edge.\n'
-                  'Depois clique em “Já concluí a verificação no SISREG”.\n\n'
-                  'O RPA não resolverá o desafio automaticamente.')
-        messagebox.showwarning('RPA SISREG — intervenção necessária',mensagem,parent=self.root)
+        # Janela não modal: permanece acessível sem bloquear Chrome/Edge.
+        # O botão de confirmação fica DENTRO do aviso, não oculto atrás da tabela.
+        if self.janela_verificacao is None or not self.janela_verificacao.winfo_exists():
+            janela=tk.Toplevel(self.root)
+            janela.title('RPA SISREG — atendimento necessário')
+            janela.geometry('545x225')
+            janela.resizable(False,False)
+            janela.transient(self.root)
+            area=ttk.Frame(janela,padding=18);area.pack(fill='both',expand=True)
+            ttk.Label(area,text='SISREG: verificação ou reconexão necessária',
+                      font=('Segoe UI',12,'bold'),wraplength=500).pack(anchor='w',pady=(0,9))
+            ttk.Label(area,text='As consultas estão pausadas e os dados já coletados foram preservados. '
+                      'Conclua a verificação ou regularize a conexão no navegador oficial. '
+                      'Depois clique no botão abaixo.',wraplength=490,justify='left').pack(anchor='w')
+            botoes=ttk.Frame(area);botoes.pack(side='bottom',fill='x',pady=(16,0))
+            self.btn_modal_confirmar=ttk.Button(botoes,text='Verificar sessão e retomar',
+                                               command=self._confirmar_verificacao)
+            self.btn_modal_confirmar.pack(side='left')
+            ttk.Button(botoes,text='Continuar aguardando',command=janela.withdraw).pack(side='right')
+            janela.protocol('WM_DELETE_WINDOW',janela.withdraw)
+            self.janela_verificacao=janela
+        else:
+            self.janela_verificacao.deiconify()
+            self.btn_modal_confirmar.configure(state='normal')
+        self.janela_verificacao.lift()
 
     def _ocultar_verificacao(self):
         self.intervencao_pendente=False
         self.aviso_verificacao.pack_forget()
         self.btn_verificacao.pack_forget()
+        if self.janela_verificacao is not None and self.janela_verificacao.winfo_exists():
+            self.janela_verificacao.withdraw()
 
     def _confirmar_verificacao(self):
         if not self.intervencao_pendente:
             return
         self.btn_verificacao.configure(state='disabled')
-        self.status.set('Conferindo uma vez se o menu autenticado voltou, sem reenviar consultas...')
+        if self.janela_verificacao is not None and self.janela_verificacao.winfo_exists():
+            self.btn_modal_confirmar.configure(state='disabled')
+            self.janela_verificacao.withdraw()
+        self.status.set('Verificando se a sessão SISREG já está disponível...')
         self._evento_seguro('VERIFICACAO_CONFIRMADA_OPERADOR','geral')
         self.aguardar_humano.confirmar()
 
@@ -778,6 +812,13 @@ class Aplicativo:
                                     pagina,r.cns,r.aih,r.procedimento,observador=observador)
                                 erros_seguidos=0
                             except Exception as exc:
+                                # Erro de gateway é indisponibilidade do serviço,
+                                # não ausência da AIH. Não emitir nova pesquisa.
+                                if servidor_indisponivel(contexto):
+                                    hospital_suspenso=True
+                                    self.eventos.put(('hospital_alerta',
+                                        'O SISREG apresentou falha de conexão. As consultas foram pausadas com segurança.'))
+                                    break
                                 erros_seguidos+=1
                                 resultado=ResultadoHospital('FALHA_NAVEGACAO',
                                               'Consulta não finalizada. Revisar a tela do SISREG.')
@@ -786,7 +827,7 @@ class Aplicativo:
                             if desafio_visivel(contexto):
                                 hospital_suspenso=True
                                 self.eventos.put(('hospital_alerta',
-                                    'Acesso suspenso pelo SISREG. Aguarde a verificação humana.'))
+                                    'Acesso do SISREG indisponível ou requer verificação. Consulte o navegador e aguarde a recuperação.'))
                                 break
                             falha = resultado.situacao not in ('FICHA_CONFERIDA','PROCEDIMENTO_DIVERGENTE')
                             categoria = ({'PROCEDIMENTO_DIVERGENTE':'PROCEDIMENTO_DIVERGENTE',
@@ -933,6 +974,10 @@ class Aplicativo:
         from aih_extract import cpf_valido
         selecionados,self.revisao_anterior=selecionar_cadastros(self.sessao.registros)
         if not selecionados:
+            identificados,elegiveis=self._cns_totais()
+            self.resumo_cadastro.set('Cadastro e CNS · '+
+                resumo_progresso(elegiveis,identificados,0,0).resumo()+
+                f' · {elegiveis-identificados} ainda sem CNS (inclui revisões humanas)')
             self.status.set('Nenhum CPF elegível pendente. Etapa 2 concluída.')
             self.estatisticas.registrar_total('cadastro',0)
             self.estatisticas.concluir('cadastro',0.0,consultados=0,encontrados=0)
@@ -946,8 +991,11 @@ class Aplicativo:
         self.consultas_cadastro=0
         self.estatisticas.registrar_total('cadastro',len(selecionados))
         identificados,elegiveis=self._cns_totais()
-        self.resumo_cadastro.set(f'Acumulado: {identificados}/{elegiveis} CNS preenchidos '
-            f'({percentual(identificados,elegiveis)}). Nesta retomada: 0/{len(selecionados)}.')
+        self.cns_aproveitados=identificados
+        self.cns_previstos=len(selecionados)
+        self.resumo_cadastro.set(f'Cadastro e CNS · '+
+            resumo_progresso(elegiveis,identificados,len(selecionados),0).resumo()+
+            f' · revisão humana: {self.revisao_anterior}')
         self.tempo_cadastro.set(f'Iniciando · manual projetado: {self._duracao(len(selecionados)*10)} (10s/consulta).')
         self.tipo_lote='cadastro';self.processando=True;self.persistencia_falhou=False;self.navegacao_falhou=False;self.pausa.clear();self.parar.clear()
         self.cadastro_concluido=False
@@ -963,10 +1011,10 @@ class Aplicativo:
             self.status.set('Outro lote em execução; aguarde sua conclusão.');return
         if not self.preparo_concluido or not self.cadastro_concluido or not self.thread_navegador or not self.thread_navegador.is_alive() or not self.browser_ready:
             self.status.set('Aguarde o fim das etapas 1 e 2 antes da consulta hospitalar.');return
-        candidatos=[i for i,r in enumerate(self.sessao.registros) if cns_formato(r.cns)
-                    and r.aih and r.nome and r.consulta_hospitalar not in
-                    ('FICHA_CONFERIDA','PROCEDIMENTO_DIVERGENTE')
-                    and not r.situacao.startswith(('CNS_CONFLITO','CPF_CONFLITANTE','ESPELHOS_CONFLITANTES'))]
+        candidatos=[i for i,r in enumerate(self.sessao.registros) if candidato_hospitalar(r)]
+        self.hospital_universo=len(self.sessao.registros)
+        self.hospital_aproveitados=sum(ficha_hospitalar_completa(r) for r in self.sessao.registros)
+        self.hospital_previstos=len(candidatos)
         if not candidatos:
             self.status.set('Sem solicitações hospitalares elegíveis para pesquisa. Resultado registrado sem consultas adicionais.')
             self.estatisticas.registrar_total('hospital',0)
@@ -976,7 +1024,8 @@ class Aplicativo:
         self.inicio_hospital=time.perf_counter()
         self.tentativas_hospital=0;self.acertos_hospital=0;self.falhas_hospital=0
         self.estatisticas.registrar_total('hospital',len(candidatos))
-        self.resumo_hospital.set(f'0 de {len(candidatos)} elegíveis com ficha conferida (0,0%).')
+        self.resumo_hospital.set('Solicitações hospitalares · '+
+            resumo_progresso(self.hospital_universo,self.hospital_aproveitados,len(candidatos),0).resumo())
         self.tempo_hospital.set(f'Iniciando · manual projetado: {self._duracao(len(candidatos)*10)} (10s/consulta).')
         for i in candidatos: self._atualizar_linha_hospital(i)
         self.tipo_lote='hospital';self.processando=True
@@ -1034,24 +1083,26 @@ class Aplicativo:
                     if itens:self.tabela.delete(*itens)
                     for indice,linha in dado:
                         self._atualizar_linha_visual(indice,linha)
-                    self.atividade_preparo.set(f'{len(dado)} registros lidos. Localizando os CPFs no PDF...')
+                    self.atividade_preparo.set(f'{len(dado)} registros sem CPF selecionados para análise.')
                 elif evento=='preparo_linhas':
                     linhas,contador,total=dado
                     for indice,linha in linhas:
                         self._atualizar_linha_visual(indice,linha)
                     self.atividade_preparo.set(f'Conferindo documentos: {contador}/{total} registros...')
                 elif evento=='preparado':
-                    sessao,informacao,atualizacao,segundos,fases=dado
+                    sessao,informacao,atualizacao,segundos,fases,previstos=dado
                     self.sessao=sessao
                     self._atualizar_tabela()
                     self.cronometro.set('Tempo: '+self._duracao(segundos))
-                    manual=len(sessao.registros)*MANUAL_SEGUNDOS_POR_AIH
+                    manual=previstos*MANUAL_SEGUNDOS_POR_AIH
                     self.resultado_titulo.set(f'✓ Extração automática concluída — {len(sessao.registros)} AIHs em {self._duracao(segundos)}')
                     cpf_presentes=sum(bool(r.cpf) for r in sessao.registros)
                     total=len(sessao.registros)
                     cobertura=(100*cpf_presentes/total) if total else 0
+                    ja_aproveitados=sum(bool(r.cpf_origem) for r in sessao.registros)
+                    novos=sum(bool(r.cpf) and not r.cpf_origem for r in sessao.registros)
                     self.resultado_descritivo.set(
-                        f'CPFs localizados: {cpf_presentes} de {total} registros ({cobertura:.1f}% de cobertura) · {informacao}')
+                        resumo_progresso(total,ja_aproveitados,previstos,novos).resumo()+f' · {informacao}')
                     self.resultado_tempo.set(
                         f'Manual estimado: {self._duracao(manual)} (15 s/AIH, hipótese fixa) · '
                         f'Diferença estimada: {self._duracao(max(0,manual-segundos))}.')
@@ -1062,9 +1113,9 @@ class Aplicativo:
                     for etapa,fase in (('PDF_INDEXACAO','indexacao_pdf'),
                                        ('CPF_CRUZAMENTO','cruzamento'),('SALVAMENTO_XLSX','gravacao')):
                         self.estatisticas.diagnosticar(etapa,'OK',segundos=fases.get(fase,0))
-                    self.estatisticas.registrar_total('preparo',len(sessao.registros))
-                    self.estatisticas.concluir('preparo',segundos,consultados=len(sessao.registros),
-                        encontrados=cpf_presentes,pendencias=total-cpf_presentes,fases=fases)
+                    self.estatisticas.registrar_total('preparo',previstos)
+                    self.estatisticas.concluir('preparo',segundos,consultados=previstos,
+                        encontrados=novos,pendencias=previstos-novos,fases=fases)
                     self.preparo_concluido=True
                     self.abas.tab(1,state='normal')
                     self.status.set('Etapa 1: dados extraídos na cópia de trabalho. Agora pode acessar o SISREG.')
@@ -1107,7 +1158,10 @@ class Aplicativo:
                     self._exibir_verificacao(dado)
                 elif evento=='verificacao_incompleta':
                     self.btn_verificacao.configure(state='normal')
-                    self.status.set('Verificação ainda pendente. Conclua no navegador e confirme novamente. Nenhuma pesquisa foi reenviada.')
+                    if self.janela_verificacao is not None and self.janela_verificacao.winfo_exists():
+                        self.btn_modal_confirmar.configure(state='normal')
+                        self.janela_verificacao.deiconify()
+                    self.status.set('Acesso ainda indisponível. Continue a verificação no navegador e confirme novamente.')
                 elif evento=='sessao_recuperada':
                     self._ocultar_verificacao()
                     self.browser_ready=True
@@ -1145,8 +1199,13 @@ class Aplicativo:
                     self._atualizar_linha_visual(idx,self._linha_visual(reg))
                     self._atualizar_linha_visual(idx,self._linha_visual(reg,com_cns=True),True)
                     self._atualizar_linha_hospital(idx)
-                    self.resumo_hospital.set(f'Fichas sem divergência nos campos consultados: {self.acertos_hospital} de {total} elegíveis ({percentual(self.acertos_hospital,total)}). '
-                        f'Pendências/ressalvas: {self.tentativas_hospital-self.acertos_hospital}.')
+                    fichas_completas=sum(r.consulta_hospitalar in ('FICHA_CONFERIDA','PROCEDIMENTO_DIVERGENTE')
+                        for r in self.sessao.registros) - self.hospital_aproveitados
+                    fichas_completas=max(0,min(self.hospital_previstos,fichas_completas))
+                    self.resumo_hospital.set('Solicitações hospitalares · '+
+                        resumo_progresso(self.hospital_universo,self.hospital_aproveitados,
+                            self.hospital_previstos,fichas_completas).resumo()+
+                        f' · sem divergência na sessão: {self.acertos_hospital}; pendências: {self.tentativas_hospital-self.acertos_hospital}')
                     self.tempo_hospital.set(
                         f'Tempo decorrido: {self._duracao(time.perf_counter()-self.inicio_hospital)} · Manual hipotético: {self._duracao(total*10)} (10s/AIH).')
                     self.barra_hospital.configure(value=100*contador/max(1,total))
@@ -1205,8 +1264,10 @@ class Aplicativo:
                     self._atualizar_linha_visual(idx,self._linha_visual(reg,com_cns=True),True)
                     self.barra.configure(value=100*contador/max(total,1))
                     identificados,elegiveis=self._cns_totais()
-                    self.resumo_cadastro.set(f'Acumulado: {identificados}/{elegiveis} CNS preenchidos '
-                        f'({percentual(identificados,elegiveis)}). Nesta retomada: {contador}/{total}.')
+                    self.resumo_cadastro.set('Cadastro e CNS · '+
+                        resumo_progresso(elegiveis,self.cns_aproveitados,self.cns_previstos,
+                            contador).resumo()+
+                        f' · CNS identificados no total: {identificados}/{elegiveis}')
                     self.tempo_cadastro.set(f'Tempo decorrido: {self._duracao(time.perf_counter()-self.inicio_cadastro)} · Manual hipotético: {self._duracao(total*10)} (10s por consulta).')
                     self.progresso.set(f'{contador}/{total} consultados nesta retomada · '
                                       f'{identificados} CNS acumulados · '
@@ -1350,10 +1411,17 @@ class Aplicativo:
         n=len(self.sessao.registros)
         e2=etapas['cadastro'];e3=etapas['hospital']
         identificados,elegiveis=self._cns_totais()
-        self.resultado_geral.set(f'{n} registros hospitalares · {etapas["preparo"].encontrados} CPFs disponíveis ({percentual(etapas["preparo"].encontrados,n)})\n'
+        cpf_total=sum(bool(r.cpf) for r in self.sessao.registros)
+        fichas_acumuladas=sum(r.consulta_hospitalar in ('FICHA_CONFERIDA','PROCEDIMENTO_DIVERGENTE')
+                              and r.carater and r.autorizador for r in self.sessao.registros)
+        sem_divergencia=sum(r.situacao=='DADOS_COLETADOS_SEM_DIVERGENCIA'
+                           for r in self.sessao.registros)
+        self.resultado_geral.set(f'{n} registros hospitalares · {cpf_total} CPFs disponíveis ({percentual(cpf_total,n)})\n'
             f'{identificados}/{elegiveis} CNS acumulados ({percentual(identificados,elegiveis)}) · '
-            f'{e3.encontrados}/{e3.total} fichas sem divergências nos campos consultados ({percentual(e3.encontrados,e3.total)})\n'
-            f'Pendências da etapa 3: {e3.pendencias} · erros técnicos: {sum(e.falhas_tecnicas for e in etapas.values())}.')
+            f'{fichas_acumuladas}/{n} fichas com dados coletados ({percentual(fichas_acumuladas,n)})\n'
+            f'Sem diferenças nos campos consultados: {sem_divergencia} · '
+            f'consultas hospitalares nesta execução: {e3.consultados}/{e3.total} · '
+            f'erros técnicos: {sum(e.falhas_tecnicas for e in etapas.values())}.')
         manual=self.estatisticas.total_manual()
         dif=manual-segundos
         self.resultado_tempos.set(
@@ -1380,9 +1448,17 @@ class Aplicativo:
     def _sobre(self):
         janela=tk.Toplevel(self.root)
         janela.title('Sobre a ferramenta — RPA SISREG')
-        janela.geometry('700x670');janela.minsize(620,560)
+        janela.geometry('730x720');janela.minsize(630,540)
         janela.transient(self.root)
-        frame=ttk.Frame(janela,padding=18);frame.pack(fill='both',expand=True)
+        painel=ttk.Frame(janela);painel.pack(fill='both',expand=True)
+        canvas=tk.Canvas(painel,highlightthickness=0)
+        barra=ttk.Scrollbar(painel,orient='vertical',command=canvas.yview)
+        canvas.configure(yscrollcommand=barra.set)
+        barra.pack(side='right',fill='y');canvas.pack(side='left',fill='both',expand=True)
+        frame=ttk.Frame(canvas,padding=18)
+        janela_canvas=canvas.create_window((0,0),window=frame,anchor='nw')
+        frame.bind('<Configure>',lambda e:canvas.configure(scrollregion=canvas.bbox('all')))
+        canvas.bind('<Configure>',lambda e:canvas.itemconfigure(janela_canvas,width=e.width))
         ttk.Label(frame,text='RPA SISREG · Sobre a ferramenta',font=('Segoe UI',15,'bold')).pack(anchor='w')
         ttk.Label(frame,text=rotulo_versao(),foreground='#52677a').pack(anchor='w',pady=(2,12))
         blocos=[
@@ -1390,6 +1466,10 @@ class Aplicativo:
           ('Processo apoiado','Apoia a conferência das internações informadas pelo prestador, automatizando extração de espelhos e consultas ao SISREG.'),
           ('Dados utilizados','Nome, AIH, CPF, CNS, procedimento e dados administrativos estritamente necessários à conferência.'),
           ('Proteção e rastreabilidade','Os dados de pacientes permanecem nos arquivos institucionais locais. Credenciais não são salvas. Histórico técnico reúne horários, quantidades, versão e hashes, sem dados individuais.'),
+          ('Retomada','As etapas ignoram CPF e CNS já preenchidos e preservam resultados hospitalares completos. O andamento mostra separadamente o total acumulado e a análise desta sessão; pendências técnicas podem ser repetidas.'),
+          ('Conferência e status','A consulta hospitalar lê caráter, código da solicitação e procedimento. Procedimento divergente requer análise fiscal; campo ausente ou ficha não aberta significa consulta incompleta, não irregularidade do paciente.'),
+          ('CAPTCHA e conexão','O SISREG pode exigir verificação humana ou apresentar indisponibilidade. O RPA pausa e preserva resultados; a operadora conclui a verificação no navegador. Não contorna CAPTCHA nem garante execução desassistida.'),
+          ('Tempo de referência','Tempos manuais são estimativas de 15 s para PDF/AIH e 10 s por consulta SISREG, não produtividade manual aferida. É possível que o SISREG seja mais lento; requisições não são aceleradas para evitar restrições.'),
           ('Responsabilidade do fiscal','Esta ferramenta é um recurso de apoio à conferência. A identificação automática de dados não substitui a análise do fiscal. Divergências, inconsistências e decisões relacionadas ao atesto permanecem sob análise humana.'),
           ('Créditos','Desenvolvimento: Enf. Bruno Vinícius. Coautoria: Joice Correa Gomes e Heloisa Hoffmann.'),
           ('Suporte','bruno.vinicius@joinville.sc.gov.br')]

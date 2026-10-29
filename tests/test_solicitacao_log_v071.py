@@ -18,7 +18,7 @@ class Pagina:
     url='https://sisregiii.saude.gov.br/cgi-bin/index'
 
 class TesteSolicitacao(unittest.TestCase):
-    def test_versao(self):self.assertEqual(APP_VERSION,'0.7.7')
+    def test_versao(self):self.assertEqual(APP_VERSION,'0.7.8')
     def test_ficha_separa_numero_solicitacao_de_autorizador(self):
         valores={
           '#fichaInternacao':'Código Solicitação 670478410; Número AIH 900000000012-3',
@@ -37,7 +37,7 @@ class TesteSolicitacao(unittest.TestCase):
         s.registrar_hospital(r,ResultadoHospital('FICHA_CONFERIDA','AIH específica','10','',r.procedimento,'670478410'),1.0)
         self.assertEqual(r.solicitacao,'670478410')
         self.assertEqual(r.autorizador,'AUTORIZADOR_EXISTENTE')
-        self.assertEqual(r.situacao,'DADOS_COLETADOS_SEM_DIVERGENCIA')
+        self.assertEqual(r.situacao,'PENDENTE_AUTORIZADOR_CONFLITANTE')
     def test_coluna_de_auditoria_exclusiva(self):
         self.assertEqual(COLUNAS_AUDITORIA[-1], 'rpaProcedimentoSISREG')
         self.assertEqual(len(COLUNAS_AUDITORIA),3)

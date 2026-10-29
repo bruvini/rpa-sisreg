@@ -14,6 +14,27 @@ SINAIS_VERIFICACAO = re.compile(
     r'computadores\s+e\s+humanos)\b', re.IGNORECASE)
 
 
+SINAIS_ERRO_SERVIDOR = re.compile(
+    r'(?:upstream connect error|disconnect/reset before headers|connection termination|'
+    r'503 service unavailable|502 bad gateway)', re.IGNORECASE)
+
+
+def texto_erro_servidor(texto: str) -> bool:
+    return bool(SINAIS_ERRO_SERVIDOR.search(texto or ''))
+
+
+def servidor_indisponivel(contexto) -> bool:
+    for pagina in getattr(contexto, 'pages', []):
+        try:
+            if pagina.is_closed() or not pagina.url.lower().startswith('https://sisregiii.saude.gov.br/'):
+                continue
+            if texto_erro_servidor(pagina.locator('body').inner_text(timeout=1200)):
+                return True
+        except Exception:
+            continue
+    return False
+
+
 def texto_exige_verificacao(texto: str) -> bool:
     """Somente inspeciona, em memória, texto já visível na tela institucional."""
     return bool(SINAIS_VERIFICACAO.search(texto or ''))

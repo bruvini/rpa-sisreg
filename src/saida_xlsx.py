@@ -72,16 +72,30 @@ def situacao_final(registro) -> str:
             'Consulta não concluída — revisão necessária'}
             and situacao in ('DOCUMENTO_PDF_LOCALIZADO', 'PRONTO_PARA_CONFERENCIA')):
         return 'Cadastro não confirmado no SISREG — revisar' if anterior == 'Não encontrado na consulta SISREG' else anterior
+    # Dados previamente presentes na planilha não são reconsultados só por
+    # abrir uma nova sessão. Preserve status fiscal anterior quando não houver
+    # novo resultado e a origem trouxer um rótulo reconhecido.
+    if (situacao in ('PRONTO_PARA_CONFERENCIA', 'AGUARDA_PREPARACAO')
+            and anterior in ORIENTACOES_FISCAIS):
+        return anterior
     if situacao in AUSENCIA_PDF or (not registro.cpf and situacao.startswith('AIH_')):
         return 'Não encontrado no espelho de AIH'
     if situacao in DIVERGENCIA_PDF:
         return 'Dados divergentes do espelho de AIH'
     if situacao == 'DADOS_COLETADOS_SEM_DIVERGENCIA':
         return 'Consulta sem divergências'
+    if situacao == 'PENDENTE_PROCEDIMENTO_NAO_CONFIRMADO':
+        return 'Procedimento não confirmado — consultar ficha'
     if situacao.startswith('PENDENTE_'):
         motivo = situacao.removeprefix('PENDENTE_')
-        if any(x in motivo for x in ('PROCEDIMENTO_DIVERGENTE', 'CARATER_CONFLITANTE', 'AUTORIZADOR_CONFLITANTE')):
+        if 'PROCEDIMENTO_DIVERGENTE' in motivo:
+            return 'Procedimento divergente — revisão fiscal'
+        if any(x in motivo for x in ('CARATER_CONFLITANTE','AUTORIZADOR_CONFLITANTE')):
             return 'Dados divergentes no SISREG'
+        if 'FICHA_NAO_ABERTA' in motivo:
+            return 'Ficha da AIH não aberta — repetir consulta'
+        if any(x in motivo for x in ('CAMPOS_FICHA_', 'FALHA_NAVEGACAO', 'TIMEOUT')):
+            return 'Falha ou dados incompletos — repetir consulta'
         if any(x in motivo for x in ('AIH_NAO_COMPROVADA', 'FICHA_NAO_ABERTA')):
             return 'AIH não confirmada na consulta — revisar' if motivo.startswith('AIH_') else 'Consulta não concluída — revisão necessária'
         if any(x in motivo for x in ('CPF_DIVERGENTE', 'NOME_DIVERGENTE', 'CNS_CONFLITO', 'CNS_DIVERGENTE')):
@@ -112,6 +126,10 @@ ORIENTACOES_FISCAIS = {
     'AIH não confirmada na consulta — revisar': 'Verificar pesquisa e ficha de internação no SISREG. Não equivale a AIH inexistente.',
     'Dados divergentes no SISREG': 'Conferir código de procedimento, caráter e autorização entre ficha e hospital; registrar conclusão fiscal.',
     'Consulta não concluída — revisão necessária': 'Falha técnica ou campo não recuperado. Repetir a consulta em sessão regular antes de avaliar o registro.',
+    'Procedimento divergente — revisão fiscal': 'A ficha foi encontrada e o código do procedimento difere do informado pelo hospital. Conferir na fonte oficial e avaliar troca autorizada ou procedimentos múltiplos antes de concluir.',
+    'Procedimento não confirmado — consultar ficha': 'A planilha anterior contém caráter e solicitação, mas não existe evidência de comparação do procedimento. Executar novamente a consulta hospitalar.',
+    'Ficha da AIH não aberta — repetir consulta': 'O cadastro foi localizado, mas a ficha exata da AIH não foi aberta com segurança. Refazer a consulta antes de concluir ausência.',
+    'Falha ou dados incompletos — repetir consulta': 'A consulta SISREG não concluiu os três campos necessários. Repetir quando a sessão estiver regular; não é divergência do paciente.',
 }
 
 
@@ -123,6 +141,8 @@ def comparacao_procedimento(registro) -> str:
     """Compara códigos, jamais infere conformidade por ausência de um dos lados."""
     hospital = digitos(str(registro.procedimento or ''))
     sisreg = digitos(str(registro.procedimento_sisreg or ''))
+    if not sisreg and getattr(registro,'comparacao_anterior','') in ('Compatível','Divergente'):
+        return registro.comparacao_anterior
     if len(hospital) != 10 or len(sisreg) != 10:
         return 'Não conferido'
     return 'Compatível' if hospital == sisreg else 'Divergente'

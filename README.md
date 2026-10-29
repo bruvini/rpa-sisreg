@@ -247,3 +247,7 @@ para automação pela mera distribuição do software.
 
 O desenvolvimento do RPA não transforma dados coletados em produção aprovada:
 **a decisão fiscal pertence ao servidor competente.**
+
+## Versão 0.7.8
+
+Leia [CHANGELOG_v078.md](CHANGELOG_v078.md) e [GUIA_v078.md](GUIA_v078.md). O programa reaproveita identificadores já coletados, distingue progresso total do lote atual e pausa diante de CAPTCHA/indisponibilidade sem tentar contornar proteções.
