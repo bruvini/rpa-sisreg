@@ -12,15 +12,17 @@ import hashlib
 from aih_extract import normalizar_aih, digitos
 from sisreg_navigation import origem_autorizada, _encontrar, NavegacaoInesperada
 
-MENU_HOSP = 'xpath=//*[@id="barraMenu"]/ul/li[5]/a'
-OPCAO_HOSP = 'xpath=//*[@id="barraMenu"]/ul/li[5]/ul/li[1]/a'
-CAMPO_CNS = 'xpath=//*[@id="main_page"]/form/center[1]/table/tbody/tr[3]/td[2]/input'
-BTN_PESQUISAR = 'input[name="enviar"][type="button"][onclick*="pesquisar"]'
+MENU_HOSP = '#barraMenu > ul > li > a:has-text("consulta hosp")'
+OPCAO_HOSP = '#barraMenu a[href="/cgi-bin/cons_aih"][target="f_principal"]'
+CAMPO_CNS = '#main_page input[name="cns"][type="text"][maxlength="15"]'
+BTN_PESQUISAR = '#main_page input[name="enviar"][type="button"][onclick^="pesquisar("]'
+LINHAS_RESULTADOS = 'table.table_listagem tr.linha_selecionavel[onclick^="mostrarFicha("]'
+CABECALHO_RESULTADOS = 'table.table_listagem .td_titulo_tabela'
 FICHA = '#fichaInternacao'
 # Codigo de solicitacao tem rotulo na celula de cabecalho, sem depender de tr.
 # Carater e procedimento sao identificados pelo par cabeçalho + proxima linha.
 CODIGO_SOLICITACAO = '#fichaInternacao > table > tbody > tr:first-child > td:first-child > b'
-PAGINADOR_PROXIMO = '#main_page > form > center:nth-child(9) > table > tbody > tr > td > a > img'
+PAGINADOR_PROXIMO = 'a[onclick^="exibirPagina("]:has(img[alt="Proxima"][src*="seta_direita.png"])'
 MAX_PAGINAS_RESULTADO = 100
 
 
@@ -71,110 +73,106 @@ def _quadros_oficiais(pagina):
             continue
 
 
+def _formulario_hospitalar(pagina, tempo=8000):
+    """Confirma o formulario de solicitacoes dentro do quadro oficial."""
+    frame, campo = _encontrar(pagina, CAMPO_CNS, tempo=tempo)
+    origem_autorizada(frame)
+    # Evita reutilizar campo cns de outra tela da aplicacao.
+    if (campo.get_attribute('name') or '').lower() != 'cns':
+        raise NavegacaoInesperada('Campo CNS nao pertence ao formulario esperado.')
+    _, botao = _encontrar(pagina, BTN_PESQUISAR, tempo=tempo)
+    if ((botao.get_attribute('type') or '').lower() != 'button' or
+            (botao.get_attribute('name') or '').lower() != 'enviar'):
+        raise NavegacaoInesperada('Botao Pesquisar nao corresponde ao esperado.')
+    return frame, campo, botao
+
+
 def abrir_pesquisa_hospitalar(pagina):
     origem_autorizada(pagina)
     try:
-        _encontrar(pagina, CAMPO_CNS, tempo=1100)
-        return
+        return _formulario_hospitalar(pagina, tempo=900)[0]
     except NavegacaoInesperada:
         pass
+    # Consulta Hosp > Solicitacoes (href oficial informado pelo operador).
     _, menu = _encontrar(pagina, MENU_HOSP, tempo=10000)
     menu.hover(timeout=8000)
-    _, opcao = _encontrar(pagina, OPCAO_HOSP, tempo=9000)
-    opcao.click(timeout=9000, no_wait_after=True)
-    _encontrar(pagina, CAMPO_CNS, tempo=21000)
+    _, opcao = _encontrar(pagina, OPCAO_HOSP, tempo=10000)
+    origem_autorizada(pagina)
+    opcao.click(timeout=12000, no_wait_after=True)
+    return _formulario_hospitalar(pagina, tempo=21000)[0]
 
 
 def pesquisar_por_cns(pagina, cns: str):
     if not (cns.isdigit() and len(cns) == 15):
-        raise NavegacaoInesperada('CNS sem 15 dígitos. Consulta hospitalar não iniciada.')
+        raise NavegacaoInesperada('CNS sem 15 digitos. Busca hospitalar nao iniciada.')
     abrir_pesquisa_hospitalar(pagina)
-    _, campo = _encontrar(pagina, CAMPO_CNS, tempo=10000)
-    _, botao = _encontrar(pagina, [BTN_PESQUISAR, 'xpath=//*[@id="main_page"]//input[@name="enviar"]'], tempo=9000)
-    if (campo.get_attribute('type') or 'text').lower() not in ('text','search'):
-        raise NavegacaoInesperada('Campo de CNS inesperado.')
-    if (botao.get_attribute('type') or '').lower() != 'button':
-        raise NavegacaoInesperada('Botão Pesquisar inesperado.')
-    origem_autorizada(pagina)
+    frame, campo, botao = _formulario_hospitalar(pagina, tempo=9000)
+    # Preencher e pesquisar no mesmo iframe, sem usar valores de outra pagina.
+    origem_autorizada(frame)
     campo.fill(cns, timeout=8000)
+    origem_autorizada(frame)
     botao.click(timeout=14000, no_wait_after=True)
 
-
 def _ler_tabela_de_resultados(pagina):
-    """Extrai as linhas da pagina em uma unica chamada ao DOM.
+    """Le somente linhas selecionaveis da tabela RESULTADOS DA PESQUISA.
 
-    Apenas a linha da AIH escolhida volta a ser acessada pelo locator.
-    Valores individuais nunca sao enviados aos logs ou ao GitHub.
+    A AIH deve estar na 6a coluna da linha que contem mostrarFicha(...).
     """
     for frame in _quadros_oficiais(pagina):
         try:
-            trs = frame.locator('#main_page table tr')
+            trs = frame.locator(LINHAS_RESULTADOS)
             if hasattr(trs, 'evaluate_all'):
                 dados = trs.evaluate_all("""rows => rows.slice(0,750).map((tr,i)=>({
-                    indice:i, textos:Array.from(tr.children)
-                        .filter(el=>el.tagName==='TD')
-                        .map(el=>(el.innerText||'').trim())
-                })).filter(l=>l.textos.length>=4)""", timeout=7000)
+                    indice:i, textos:Array.from(tr.querySelectorAll(':scope > td'))
+                        .map(el=>(el.innerText||'').trim()),
+                    acao:tr.getAttribute('onclick')||''
+                }))""", timeout=7000)
                 linhas = []
-                for d in dados:
-                    textos = tuple(d['textos'])
-                    if any(normalizar_aih(c) for c in textos):
-                        linhas.append((trs.nth(d['indice']), textos))
+                for dado in dados:
+                    textos = tuple(dado['textos'])
+                    if (len(textos) == 7 and
+                            normalizar_aih(textos[5]) and
+                            re.fullmatch(r"\s*mostrarFicha\(['\"]\d+['\"]\)\s*;?\s*",
+                                         dado['acao'])):
+                        linhas.append((trs.nth(dado['indice']), textos))
             else:
-                # Compatibilidade com mocks sintéticos de testes.
                 linhas = []
                 for i in range(min(trs.count(),750)):
                     tr = trs.nth(i)
                     td = tr.locator('td')
-                    if td.count() >= 4:
-                        textos = tuple(v.strip() for v in td.all_inner_texts())
-                        if any(normalizar_aih(c) for c in textos):
-                            linhas.append((tr, textos))
+                    textos = tuple(v.strip() for v in td.all_inner_texts())
+                    acao = tr.get_attribute('onclick') if hasattr(tr,'get_attribute') else "mostrarFicha('1')"
+                    if (len(textos)==7 and normalizar_aih(textos[5]) and
+                            re.fullmatch(r"\s*mostrarFicha\(['\"]\d+['\"]\)\s*;?\s*",acao or '')):
+                        linhas.append((tr,textos))
             if linhas:
                 assinatura = hashlib.sha256(
-                    repr([t for _, t in linhas]).encode('utf-8')).hexdigest()
+                    repr([textos for _,textos in linhas]).encode('utf-8')).hexdigest()
                 return frame, linhas, assinatura
         except Exception:
             continue
     return None, [], None
 
 def _link_proxima_pagina(frame):
-    """Reconhece a flecha do SISREG; não clica em voltar ou em paginação ambígua."""
+    """Usa apenas a seta Proxima aninhada em exibirPagina(...) no quadro oficial."""
     try:
         imagens = frame.locator(PAGINADOR_PROXIMO)
         qtd = imagens.count()
+        if qtd == 0:
+            return None
+        if qtd != 1:
+            raise NavegacaoInesperada('Mais de um botao Proxima: paginacao ambigua.')
+        link = imagens.first if hasattr(imagens,'first') else imagens.nth(0)
+        if not link.is_visible() or not link.is_enabled():
+            raise NavegacaoInesperada('Botao Proxima indisponivel; pagina nao confirmada.')
+        acao=link.get_attribute('onclick') or ''
+        if not re.match(r"^\s*exibirPagina\(\s*\d+\s*,\s*\d+\s*\)",acao):
+            raise NavegacaoInesperada('Acao do paginador fora do padrao esperado.')
+        return link
+    except NavegacaoInesperada:
+        raise
     except Exception as exc:
-        raise NavegacaoInesperada('Não foi possível verificar a paginação.') from exc
-    if not qtd:
-        return None
-    candidatas = []
-    for i in range(min(qtd, 12)):
-        img = imagens.nth(i)
-        try:
-            if not img.is_visible():
-                continue
-            link = img.locator('xpath=..')
-            if not link.is_visible() or not link.is_enabled():
-                continue
-            texto = ' '.join((img.get_attribute(k) or '') for k in ('alt','title','src'))
-            texto += ' ' + ' '.join((link.get_attribute(k) or '') for k in ('title','aria-label','class'))
-            texto = texto.lower()
-            if any(k in texto for k in ('anterior','previous','prev','voltar','left','esquerda','disabled','inativo')):
-                continue
-            explicito = any(k in texto for k in ('próxim','proxim','next','avanç','avanc','right','direita'))
-            candidatas.append((link, explicito))
-        except Exception as exc:
-            raise NavegacaoInesperada('Controle de paginação inesperado.') from exc
-    explicitas = [link for link, exp in candidatas if exp]
-    if len(explicitas) == 1:
-        return explicitas[0]
-    if len(candidatas) == 1 and qtd == 1:
-        # O seletor fornecido aponta diretamente para a flecha seguinte.
-        return candidatas[0][0]
-    if candidatas:
-        raise NavegacaoInesperada('Paginação ambígua; não foi possível determinar a próxima página.')
-    return None
-
+        raise NavegacaoInesperada('Nao foi possivel validar o paginador.') from exc
 
 def selecionar_linha_aih(pagina, aih: str, espera_ms: int = 15000, observador=None, cancelar=None):
     """Busca AIH exata em TODAS as páginas acessíveis de resultados.
@@ -205,17 +203,17 @@ def selecionar_linha_aih(pagina, aih: str, espera_ms: int = 15000, observador=No
         visitadas.add(assinatura)
         encontrados = []
         for tr, textos in linhas:
-            posicoes = [j for j,v in enumerate(textos) if normalizar_aih(v) == procurada]
-            if len(posicoes) == 1:
-                encontrados.append((tr,posicoes[0]))
+            if len(textos)==7 and normalizar_aih(textos[5]) == procurada:
+                encontrados.append(tr)
         if len(encontrados) > 1:
             raise NavegacaoInesperada('AIH repetida na página; não foi aberta automaticamente.')
         if len(encontrados) == 1:
-            tr,pos=encontrados[0]
-            alvo=tr.locator('td').nth(pos)
-            if not alvo.is_visible():
-                raise NavegacaoInesperada('Célula da AIH encontrada não está visível.')
-            alvo.click(timeout=12000,no_wait_after=True)
+            tr=encontrados[0]
+            if not tr.is_visible():
+                raise NavegacaoInesperada('Linha da AIH nao esta visivel.')
+            # O evento de abertura esta na TR (onclick mostrarFicha).
+            origem_autorizada(frame)
+            tr.click(timeout=12000,no_wait_after=True)
             return
         if observador:
             observador('PAGINA_RESULTADOS','OK',0.0,'NENHUM')
