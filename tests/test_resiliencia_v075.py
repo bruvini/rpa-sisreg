@@ -55,7 +55,7 @@ class Retomada(unittest.TestCase):
         self.assertEqual(s.registrar(None,erro_tecnico=False),'PENDENCIA_IDENTIDADE')
     def test_arquivo_reimportado_preserva_situacao_de_revisao(self):
         reg=r(situacao_anterior='Não encontrado na consulta SISREG')
-        self.assertEqual(situacao_final(reg),'Não encontrado na consulta SISREG')
+        self.assertEqual(situacao_final(reg),'Cadastro não confirmado no SISREG — revisar')
     def test_codigo_nao_grava_identificadores_em_metadados(self):
         import retomada
         self.assertNotIn('localStorage',Path(retomada.__file__).read_text(encoding='utf-8'))

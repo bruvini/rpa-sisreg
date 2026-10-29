@@ -18,7 +18,7 @@ class Pagina:
     url='https://sisregiii.saude.gov.br/cgi-bin/index'
 
 class TesteSolicitacao(unittest.TestCase):
-    def test_versao(self):self.assertEqual(APP_VERSION,'0.7.6')
+    def test_versao(self):self.assertEqual(APP_VERSION,'0.7.7')
     def test_ficha_separa_numero_solicitacao_de_autorizador(self):
         valores={
           '#fichaInternacao':'Código Solicitação 670478410; Número AIH 900000000012-3',

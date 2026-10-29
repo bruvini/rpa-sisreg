@@ -1,6 +1,6 @@
 # RPA SISREG — Conferência automatizada de internações
 
-![Versão](https://img.shields.io/badge/vers%C3%A3o-0.7.6-07436b) ![Python](https://img.shields.io/badge/Python-3.12-3776AB) ![Licença](https://img.shields.io/badge/c%C3%B3digo-MIT-555555)
+![Versão](https://img.shields.io/badge/vers%C3%A3o-0.7.7-07436b) ![Python](https://img.shields.io/badge/Python-3.12-3776AB) ![Licença](https://img.shields.io/badge/c%C3%B3digo-MIT-555555)
 
 > **A máquina executa o trabalho repetitivo; o fiscal analisa as exceções e toma a decisão.**
 
@@ -225,6 +225,15 @@ Teste completo: `python -m unittest discover -s tests -v` (somente dados
 sintéticos). Homologue também 5 AIHs autorizadas, comparando Excel e tela,
 verificando logs e recuperação de login. Os testes de UI requerem ambiente
 gráfico com `SISREG_GUI_TEST=1`. Revise `CHANGELOG.md` e `RELATORIO_TESTES_v074.md`.
+
+
+## Recuperação hospitalar e leitura dos resultados (v0.7.7)
+
+- **CAPTCHA / sessão indisponível na etapa 3:** a fila hospitalar fica **pausada**, não encerrada. Os resultados anteriores são salvos. O programa mantém a janela institucional aberta enquanto aguarda intervenção humana; ao confirmar a autenticação, reconstrói a fila **somente das fichas ainda não confirmadas**. A confirmação não resolve o CAPTCHA, e o RPA não tenta contorná-lo.
+- **Resultados técnicos:** a conclusão automatizada não é atesto. O TXT definitivo só é produzido ao finalizar o ciclo ou ao encerrar o aplicativo; um lote suspenso não pode ser classificado como concluído.
+- **Status na coluna H:** passe o mouse sobre a célula para consultar a **orientação fiscal**. Não foi criada uma quarta coluna. Os textos diferenciam: (a) aguardando consulta; (b) cadastro não confirmado no SISREG; (c) incompatibilidade real dos dados disponíveis; (d) falha técnica de consulta; e (e) campos pesquisados sem divergência. “Cadastro não confirmado” **não significa inexistência do paciente**; “AIH não confirmada” **não comprova inexistência da AIH**.
+- **Tempo de consulta cadastral:** as premissas manuais de 10 segundos por consulta são **hipotéticas**, não uma medição da atuação de servidor. Nesta revisão não reduzimos artificialmente o intervalo entre chamadas, que deve obedecer aos limites do serviço. Para uma comparação gerencial defensável, registrar uma pequena amostra de consultas manuais com o mesmo escopo antes de afirmar ganho de tempo.
+- **Checkpoint e logs:** não persistir credenciais nem dados pessoais no TXT. Reusar a última planilha de `Análises/` se for necessário reiniciar o aplicativo. A integridade da fonte é verificada por SHA-256. As decisões fiscais continuam humanas.
 
 ## Segurança e licença
 

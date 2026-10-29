@@ -9,6 +9,8 @@ from aih_extract import cpf_valido, cns_formato
 
 REVISAO_MANUAL = frozenset({
     'Não encontrado na consulta SISREG',
+    'Cadastro não confirmado no SISREG — revisar',
+    'AIH não confirmada na consulta — revisar',
     'Dados divergentes na consulta SISREG',
     'Dados divergentes do espelho de AIH',
     'Não encontrado no espelho de AIH',

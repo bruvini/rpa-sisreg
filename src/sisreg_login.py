@@ -758,6 +758,7 @@ class Aplicativo:
                         indices=payload
                         self.eventos.put(('hospital_iniciado',len(indices)))
                         erros_seguidos=0
+                        hospital_suspenso=False
                         for j,idx in enumerate(indices,1):
                             if self.parar.is_set():break
                             while self.pausa.is_set() and not self.parar.wait(.25):pass
@@ -783,6 +784,7 @@ class Aplicativo:
                                 self.eventos.put(('diagnostico_tecnico',('FICHA_HOSPITALAR',
                                    'ERRO',j,time.perf_counter()-inicio,categoria_excecao(type(exc).__name__))))
                             if desafio_visivel(contexto):
+                                hospital_suspenso=True
                                 self.eventos.put(('hospital_alerta',
                                     'Acesso suspenso pelo SISREG. Aguarde a verificação humana.'))
                                 break
@@ -798,13 +800,20 @@ class Aplicativo:
                                 'PENDENCIA' if falha else 'OK',j,time.perf_counter()-inicio,categoria)))
                             self.eventos.put(('hospital_item',(idx,resultado,time.perf_counter()-inicio,j,len(indices))))
                             if erros_seguidos>=3:
+                                hospital_suspenso=True
                                 self.eventos.put(('hospital_alerta','Três falhas seguidas; lote hospitalar suspenso.'))
                                 break
                             self.parar.wait(1.8)
-                        self.eventos.put(('hospital_fim',len(indices)))
-                        if (erros_seguidos>=3 or desafio_visivel(contexto)) and not self.parar.is_set():
+                        # Não declarar fim nem finalizar relatório enquanto houver
+                        # CAPTCHA, sessão comprometida ou fila ainda incompleta.
+                        if hospital_suspenso and not self.parar.is_set():
+                            self.eventos.put(('hospital_suspenso',len(indices)))
                             if not self._esperar_intervencao(contexto,'hospital'):
                                 return
+                        elif not self.parar.is_set():
+                            self.eventos.put(('hospital_fim',len(indices)))
+                        else:
+                            self.eventos.put(('hospital_suspenso',len(indices)))
                         continue
                     if cmd!='lote':continue
                     indices=payload
@@ -1143,6 +1152,15 @@ class Aplicativo:
                     self.barra_hospital.configure(value=100*contador/max(1,total))
                     self.progresso_hospital.set(f'{contador}/{total} consultadas · última: {rotulo_situacao(reg.situacao)} · '
                                                f'{self._duracao(duracao)} nesta AIH')
+                elif evento=='hospital_suspenso':
+                    # Um lote pausado NÃO concluiu a auditoria. Salva o trabalho
+                    # e aguarda a pessoa, mantendo a possibilidade de retomar.
+                    self._salvar_checkpoint()
+                    self.processando=False
+                    self.navegacao_falhou=True
+                    self.btn_hospital.configure(state='disabled')
+                    self._resumir_historico()
+                    self.status.set('Etapa 3 pausada. Resultados anteriores preservados; conclua a verificação no SISREG para retomar.')
                 elif evento=='hospital_fim':
                     self.estatisticas.concluir('hospital',time.perf_counter()-self.inicio_hospital,
                         consultados=self.tentativas_hospital,encontrados=self.acertos_hospital,
@@ -1269,7 +1287,7 @@ class Aplicativo:
         try:
             self.historico.atualizar(cns_identificados=cns,consultas_hospitalares=consultas,
                 sem_divergencia_identificada=positivos,pendencias=pendencias,
-                erros_tecnicos=self.dados_atuais.get('falhas',0))
+                erros_tecnicos=self.dados_atuais.get('falhas',0)+self.falhas_hospital)
         except (OSError,ValueError):pass
 
     def _registrar_falha_preparacao(self, segundos: float) -> None:

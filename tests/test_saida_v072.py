@@ -18,17 +18,17 @@ def reg(st):
                     '11144477735','900000000000001','','',situacao=st)
 
 class TesteSituacoes(unittest.TestCase):
-    def test_versao(self): self.assertEqual(APP_VERSION,'0.7.6')
+    def test_versao(self): self.assertEqual(APP_VERSION,'0.7.7')
     def test_nao_encontrado_no_pdf(self):
         self.assertEqual(situacao_final(reg('AIH_AUSENTE_NO_PDF')),'Não encontrado no espelho de AIH')
     def test_dados_divergentes_pdf(self):
         self.assertEqual(situacao_final(reg('NOME_DIVERGENTE_ESPELHO')),'Dados divergentes do espelho de AIH')
     def test_cadastro_ausente(self):
-        self.assertEqual(situacao_final(reg('PENDENTE_FICHA_CADASTRO_NAO_IDENTIFICADA')),'Não encontrado na consulta SISREG')
+        self.assertEqual(situacao_final(reg('PENDENTE_FICHA_CADASTRO_NAO_IDENTIFICADA')),'Cadastro não confirmado no SISREG — revisar')
     def test_cadastro_divergente(self):
         self.assertEqual(situacao_final(reg('PENDENTE_CPF_DIVERGENTE_CADASTRO')),'Dados divergentes na consulta SISREG')
     def test_aih_nao_confirmada(self):
-        self.assertEqual(situacao_final(reg('PENDENTE_AIH_NAO_COMPROVADA_FICHA')),'Não encontrado AIH no SISREG')
+        self.assertEqual(situacao_final(reg('PENDENTE_AIH_NAO_COMPROVADA_FICHA')),'AIH não confirmada na consulta — revisar')
     def test_dados_divergentes_sisreg(self):
         self.assertEqual(situacao_final(reg('PENDENTE_PROCEDIMENTO_DIVERGENTE')),'Dados divergentes no SISREG')
     def test_conferido_nao_equivale_atesto(self):

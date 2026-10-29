@@ -67,10 +67,11 @@ def situacao_final(registro) -> str:
     # previamente sinalizada em 'aguardando' apenas por reindexar o PDF.
     if (not registro.cns and anterior in {
             'Não encontrado na consulta SISREG',
+            'Cadastro não confirmado no SISREG — revisar',
             'Dados divergentes na consulta SISREG',
             'Consulta não concluída — revisão necessária'}
             and situacao in ('DOCUMENTO_PDF_LOCALIZADO', 'PRONTO_PARA_CONFERENCIA')):
-        return anterior
+        return 'Cadastro não confirmado no SISREG — revisar' if anterior == 'Não encontrado na consulta SISREG' else anterior
     if situacao in AUSENCIA_PDF or (not registro.cpf and situacao.startswith('AIH_')):
         return 'Não encontrado no espelho de AIH'
     if situacao in DIVERGENCIA_PDF:
@@ -82,12 +83,12 @@ def situacao_final(registro) -> str:
         if any(x in motivo for x in ('PROCEDIMENTO_DIVERGENTE', 'CARATER_CONFLITANTE', 'AUTORIZADOR_CONFLITANTE')):
             return 'Dados divergentes no SISREG'
         if any(x in motivo for x in ('AIH_NAO_COMPROVADA', 'FICHA_NAO_ABERTA')):
-            return 'Não encontrado AIH no SISREG' if motivo.startswith('AIH_') else 'Consulta não concluída — revisão necessária'
+            return 'AIH não confirmada na consulta — revisar' if motivo.startswith('AIH_') else 'Consulta não concluída — revisão necessária'
         if any(x in motivo for x in ('CPF_DIVERGENTE', 'NOME_DIVERGENTE', 'CNS_CONFLITO', 'CNS_DIVERGENTE')):
             return 'Dados divergentes na consulta SISREG'
         if any(x in motivo for x in ('NOME_NAO_CONFIRMADO', 'CNS_NAO_IDENTIFICADO', 'CNS_NAO_UNICO',
                                     'FICHA_CADASTRO_NAO_IDENTIFICADA', 'CPF_NAO_CONFIRMADO')):
-            return 'Não encontrado na consulta SISREG'
+            return 'Cadastro não confirmado no SISREG — revisar'
         if any(x in motivo for x in ('FALHA_', 'CAMPOS_FICHA_', 'TIMEOUT', 'NAVEGACAO')):
             return 'Consulta não concluída — revisão necessária'
         return 'Consulta não concluída — revisão necessária'
@@ -98,6 +99,24 @@ def situacao_final(registro) -> str:
                     'PRONTO_PARA_CONFERENCIA', 'AGUARDA_PREPARACAO'):
         return 'Aguardando consulta hospitalar' if registro.cns else 'Aguardando consulta SISREG'
     return 'Consulta não concluída — revisão necessária'
+
+
+ORIENTACOES_FISCAIS = {
+    'Consulta sem divergências': 'Automação não identificou divergência nos campos consultados. Não representa atesto; aplicar o procedimento normal de fiscalização.',
+    'Aguardando consulta hospitalar': 'Consulta de internação ainda não executada ou não concluída. Retomar a etapa 3 antes de avaliar a produção.',
+    'Aguardando consulta SISREG': 'Cadastro ainda não pesquisado. Prosseguir com a etapa 2.',
+    'Não encontrado no espelho de AIH': 'Conferir AIH e competência do PDF recebido; verificar o espelho em fonte institucional antes de concluir ausência.',
+    'Dados divergentes do espelho de AIH': 'Conferir AIH, identidade e documento diretamente no espelho; solicitar correção ao prestador se confirmada.',
+    'Cadastro não confirmado no SISREG — revisar': 'Conferir manualmente cadastro, nome e CPF/CNS em tela oficial. O RPA NÃO comprovou inexistência cadastral.',
+    'Dados divergentes na consulta SISREG': 'Verificar identidade e documentos no cadastro oficial. Não substituir CNS/CPF automaticamente.',
+    'AIH não confirmada na consulta — revisar': 'Verificar pesquisa e ficha de internação no SISREG. Não equivale a AIH inexistente.',
+    'Dados divergentes no SISREG': 'Conferir código de procedimento, caráter e autorização entre ficha e hospital; registrar conclusão fiscal.',
+    'Consulta não concluída — revisão necessária': 'Falha técnica ou campo não recuperado. Repetir a consulta em sessão regular antes de avaliar o registro.',
+}
+
+
+def orientacao_fiscal(situacao: str) -> str:
+    return ORIENTACOES_FISCAIS.get(situacao, 'Revisar a evidência nas fontes oficiais. A automação não realiza atesto fiscal.')
 
 
 def comparacao_procedimento(registro) -> str:
@@ -178,6 +197,7 @@ def adequar_colunas(ws) -> None:
 
 def escrever_linha(ws, registro) -> None:
     from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.comments import Comment
     estado=situacao_final(registro)
     data=data_br(registro.atualizado_em)
     comparacao=comparacao_procedimento(registro)
@@ -189,5 +209,7 @@ def escrever_linha(ws, registro) -> None:
         cel.font=Font(name='Aptos',size=10,color=color.get(estado,'293D52') if coluna==8 else '293D52',bold=(coluna==8))
         cel.alignment=Alignment(vertical='center',wrap_text=coluna==8)
         cel.fill=PatternFill('solid',fgColor='F1F7FA' if registro.linha%2==0 else 'FFFFFF')
+    # Comentário de orientação sem nova coluna ou dado sensível adicional.
+    ws.cell(registro.linha,8).comment=Comment(orientacao_fiscal(estado),'RPA SISREG')
     ws.cell(registro.linha,9).number_format='DD/MM/YYYY HH:MM:SS'
     ws.row_dimensions[registro.linha].height=28
