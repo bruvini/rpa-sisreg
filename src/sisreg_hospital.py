@@ -80,7 +80,9 @@ def _formulario_hospitalar(pagina, tempo=8000):
     # Evita reutilizar campo cns de outra tela da aplicacao.
     if (campo.get_attribute('name') or '').lower() != 'cns':
         raise NavegacaoInesperada('Campo CNS nao pertence ao formulario esperado.')
-    _, botao = _encontrar(pagina, BTN_PESQUISAR, tempo=tempo)
+    frame_botao, botao = _encontrar(pagina, BTN_PESQUISAR, tempo=tempo)
+    if frame_botao is not frame:
+        raise NavegacaoInesperada('Botao e campo CNS estao em quadros diferentes.')
     if ((botao.get_attribute('type') or '').lower() != 'button' or
             (botao.get_attribute('name') or '').lower() != 'enviar'):
         raise NavegacaoInesperada('Botao Pesquisar nao corresponde ao esperado.')
