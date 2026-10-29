@@ -1,6 +1,6 @@
 # RPA SISREG — Conferência automatizada de internações
 
-![Versão](https://img.shields.io/badge/vers%C3%A3o-0.7.13-07436b) ![Python](https://img.shields.io/badge/Python-3.12-3776AB) ![Licença](https://img.shields.io/badge/c%C3%B3digo-MIT-555555)
+![Versão](https://img.shields.io/badge/vers%C3%A3o-0.7.14-07436b) ![Python](https://img.shields.io/badge/Python-3.12-3776AB) ![Licença](https://img.shields.io/badge/c%C3%B3digo-MIT-555555)
 
 > **A máquina executa o trabalho repetitivo; o fiscal analisa as exceções e toma a decisão.**
 
@@ -46,6 +46,16 @@ manualmente em PDFs e no SISREG. O código pode ser reutilizado sob os termos de
 A planilha hospitalar de entrada e o PDF são **somente leitura**. A cópia enriquecida
 é gerada automaticamente sem apagar o original. Na estação de trabalho, mantenha
 o Excel fechado enquanto o lote é processado.
+
+## Pesquisa hospitalar conforme HTML oficial (v0.7.14)
+
+- Consulta Hosp > Solicitações: usa o link real de `/cgi-bin/cons_aih`.
+- Busca o CNS no formulário com `input[name="cns"][maxlength="15"]` e aciona o botão `PESQUISAR` na mesma janela interna.
+- Lista somente `table.table_listagem tr.linha_selecionavel` com `onclick="mostrarFicha(...)"` e compara a AIH exata da **sexta coluna**.
+- A abertura ocorre por clique na **linha completa**, conforme o evento da própria tabela.
+- Se necessário, avança por `seta_direita.png` / `alt="Proxima"` e `exibirPagina(...)`, confirmando a mudança efetiva dos resultados.
+- Preservados os cabeçalhos sem posição fixa da ficha, os checkpoints, o fluxo de retomada e o tratamento de falhas técnicas.
+- A página oficial precisa ser homologada novamente antes do processamento integral.
 
 ## Leitura por cabeçalhos e resiliência (v0.7.13)
 
