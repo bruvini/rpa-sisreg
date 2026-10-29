@@ -17,12 +17,9 @@ OPCAO_HOSP = 'xpath=//*[@id="barraMenu"]/ul/li[5]/ul/li[1]/a'
 CAMPO_CNS = 'xpath=//*[@id="main_page"]/form/center[1]/table/tbody/tr[3]/td[2]/input'
 BTN_PESQUISAR = 'input[name="enviar"][type="button"][onclick*="pesquisar"]'
 FICHA = '#fichaInternacao'
-# Seletores confirmados na ficha em 29/10/2026.
-CARATER = '#fichaInternacao > table > tbody > tr:nth-child(46) > td:nth-child(1)'
-# Código da solicitação não é necessariamente o código autorizador.
-CODIGO_SOLICITACAO = '#fichaInternacao > table > tbody > tr:nth-child(1) > td:nth-child(1) > b'
-# Sem seletor independente validado, não inferir o código autorizador.
-PROCEDIMENTO = '#fichaInternacao > table > tbody > tr:nth-child(50) > td:nth-child(2)'
+# Codigo de solicitacao tem rotulo na celula de cabecalho, sem depender de tr.
+# Carater e procedimento sao identificados pelo par cabeçalho + proxima linha.
+CODIGO_SOLICITACAO = '#fichaInternacao > table > tbody > tr:first-child > td:first-child > b'
 PAGINADOR_PROXIMO = '#main_page > form > center:nth-child(9) > table > tbody > tr > td > a > img'
 MAX_PAGINAS_RESULTADO = 100
 
@@ -104,32 +101,42 @@ def pesquisar_por_cns(pagina, cns: str):
 
 
 def _ler_tabela_de_resultados(pagina):
-    """Lê só a lista de resultados em quadros do domínio oficial.
+    """Extrai as linhas da pagina em uma unica chamada ao DOM.
 
-    O fingerprint é efêmero e nunca vai para logs (nem é persistido).
+    Apenas a linha da AIH escolhida volta a ser acessada pelo locator.
+    Valores individuais nunca sao enviados aos logs ou ao GitHub.
     """
     for frame in _quadros_oficiais(pagina):
         try:
             trs = frame.locator('#main_page table tr')
-            n = min(trs.count(), 750)
-            linhas = []
-            for i in range(n):
-                tr = trs.nth(i)
-                celulas = tr.locator('td')
-                if celulas.count() < 4:
-                    continue
-                textos = tuple(v.strip() for v in celulas.all_inner_texts())
-                # O formulário de pesquisa também possui tabelas; só considerar
-                # a tabela de solicitações se a linha contiver uma AIH de 13 dígitos.
-                if any(normalizar_aih(v) for v in textos):
-                    linhas.append((tr, textos))
+            if hasattr(trs, 'evaluate_all'):
+                dados = trs.evaluate_all("""rows => rows.slice(0,750).map((tr,i)=>({
+                    indice:i, textos:Array.from(tr.children)
+                        .filter(el=>el.tagName==='TD')
+                        .map(el=>(el.innerText||'').trim())
+                })).filter(l=>l.textos.length>=4)""", timeout=7000)
+                linhas = []
+                for d in dados:
+                    textos = tuple(d['textos'])
+                    if any(normalizar_aih(c) for c in textos):
+                        linhas.append((trs.nth(d['indice']), textos))
+            else:
+                # Compatibilidade com mocks sintéticos de testes.
+                linhas = []
+                for i in range(min(trs.count(),750)):
+                    tr = trs.nth(i)
+                    td = tr.locator('td')
+                    if td.count() >= 4:
+                        textos = tuple(v.strip() for v in td.all_inner_texts())
+                        if any(normalizar_aih(c) for c in textos):
+                            linhas.append((tr, textos))
             if linhas:
-                assinatura = hashlib.sha256(repr([t for _, t in linhas]).encode('utf-8')).hexdigest()
+                assinatura = hashlib.sha256(
+                    repr([t for _, t in linhas]).encode('utf-8')).hexdigest()
                 return frame, linhas, assinatura
         except Exception:
             continue
     return None, [], None
-
 
 def _link_proxima_pagina(frame):
     """Reconhece a flecha do SISREG; não clica em voltar ou em paginação ambígua."""
@@ -293,60 +300,85 @@ def _texto_campo_ficha(frame, seletor):
         return ''
 
 
+def _normalizar_rotulo(texto):
+    texto = unicodedata.normalize('NFD', str(texto or '').upper())
+    texto = ''.join(ch for ch in texto if unicodedata.category(ch) != 'Mn')
+    return ' '.join(texto.strip(' :\t\r\n').split())
+
+
+def _extrair_campos_de_linhas(linhas):
+    """Le campos por cabecalhos do SISREG e a linha seguinte, nao por indice.
+
+    Cada entrada eh uma lista de textos de TDs da mesma TR. O cabecalho de
+    carater fica ao lado de Classificacao de Risco; procedimento solicitado
+    fica ao lado de Codigo. O valor e lido APENAS da linha imediatamente
+    seguinte e na coluna correspondente. Duplicidade gera campo vazio.
+    """
+    candidatos = {'carater':set(),'solicitacao':set(),'procedimento':set()}
+    if not isinstance(linhas, (list,tuple)):
+        return '', '', ''
+    for pos, valores in enumerate(linhas[:160]):
+        if not isinstance(valores,(list,tuple)) or not valores:
+            continue
+        rotulos = [_normalizar_rotulo(c) for c in valores]
+        primeiro = rotulos[0]
+        segundo = rotulos[1] if len(rotulos)>1 else ''
+        if primeiro.startswith('CODIGO SOLICITACAO'):
+            # O primeiro TD e um texto da forma Codigo Solicitacao: <b>numero</b>.
+            trecho = re.sub(r'^CODIGO SOLICITACAO\s*:?\s*', '', primeiro)
+            codigo = obter_autorizador(trecho)
+            if codigo:
+                candidatos['solicitacao'].add(codigo)
+        if pos + 1 >= len(linhas):
+            continue
+        seguintes = linhas[pos + 1]
+        if not isinstance(seguintes,(list,tuple)) or not seguintes:
+            continue
+        if primeiro == 'CARATER' and segundo == 'CLASSIFICACAO DE RISCO':
+            codigo = obter_carater(seguintes[0])
+            if codigo:
+                candidatos['carater'].add(codigo)
+        if primeiro == 'PROCEDIMENTO SOLICITADO' and segundo == 'CODIGO' and len(seguintes)>1:
+            # Texto da primeira celula identifica o procedimento; segunda e SIGTAP.
+            if str(seguintes[0]).strip():
+                codigo = obter_procedimento(seguintes[1])
+                if codigo:
+                    candidatos['procedimento'].add(codigo)
+    def unico(chave):
+        valores=candidatos[chave]
+        return next(iter(valores)) if len(valores)==1 else ''
+    return unico('carater'), unico('solicitacao'), unico('procedimento')
+
+
 def _campos_por_rotulo(frame):
-    """Fallback: somente rótulos da ficha; códigos ambíguos não são assumidos."""
+    """Captura, uma vez por tentativa, somente TDs do #fichaInternacao."""
     try:
-        linhas = frame.locator('#fichaInternacao table tr').all_inner_texts(timeout=1800)[:110]
+        trs = frame.locator('#fichaInternacao > table > tbody > tr')
+        # Um unico acesso a pagina evita dezenas de esperas do Playwright.
+        linhas = trs.evaluate_all("""rows => rows.slice(0,160).map(tr =>
+          Array.from(tr.children).filter(el=>el.tagName==='TD')
+            .map(el=>(el.innerText||'').trim())
+        )""", timeout=4000)
+        return _extrair_campos_de_linhas(linhas)
     except Exception:
         return '', '', ''
 
-    def sem_acentos(texto):
-        return ''.join(c for c in unicodedata.normalize('NFD', texto.upper())
-                       if unicodedata.category(c) != 'Mn')
-
-    candidatos = [[], [], []]
-    for i, linha in enumerate(linhas):
-        rotulo = sem_acentos(linha)
-        janela = linhas[i:i + 2]
-        if 'CARATER' in rotulo and ('INTERNACAO' in rotulo or 'ATENDIMENTO' in rotulo):
-            candidatos[0].extend(janela)
-        if 'PROCEDIMENTO' in rotulo:
-            candidatos[2].extend(janela)
-        if 'SOLICITACAO' in rotulo and ('CODIGO' in rotulo or 'NUMERO' in rotulo):
-            candidatos[1].append(linha)
-
-    def unico(textos, extrator):
-        encontrados = {n for t in textos if (n := extrator(t))}
-        return next(iter(encontrados)) if len(encontrados) == 1 else ''
-
-    return (unico(candidatos[0], obter_carater),
-            unico(candidatos[1], obter_autorizador),
-            unico(candidatos[2], obter_procedimento))
-
 
 def _ler_tres_campos(frame, cancelar=None, espera_ms=8500):
-    """Espera renderização da ficha e usa rótulos quando as linhas se deslocam."""
+    """Aguarda a ficha e valida campos apenas por seus rotulos semanticos."""
     fim = time.monotonic() + espera_ms / 1000
-    viu_campo = False
+    achou_algum = False
     while True:
         _verificar_interrupcao(cancelar)
         origem_autorizada(frame)
-        textos = (_texto_campo_ficha(frame, CARATER),
-                  _texto_campo_ficha(frame, CODIGO_SOLICITACAO),
-                  _texto_campo_ficha(frame, PROCEDIMENTO))
-        valores = (obter_carater(textos[0]), obter_autorizador(textos[1]),
-                   obter_procedimento(textos[2]))
-        viu_campo |= any(bool(t) for t in textos)
-        if not all(valores):
-            rotulados = _campos_por_rotulo(frame)
-            valores = tuple(a or b for a, b in zip(valores, rotulados))
+        valores = _campos_por_rotulo(frame)
+        achou_algum |= any(bool(x) for x in valores)
         if all(valores):
             return valores, ''
         if time.monotonic() >= fim:
-            return None, ('CAMPOS_FICHA_INCOMPLETOS' if viu_campo
+            return None, ('CAMPOS_FICHA_INCOMPLETOS' if achou_algum
                           else 'CAMPOS_FICHA_NAO_CONFIRMADOS')
         time.sleep(.3)
-
 
 def obter_detalhes(pagina, aih: str, procedimento_hospital: str = '',
                    espera_ficha_ms: int = 16000, cancelar=None) -> ResultadoHospital:

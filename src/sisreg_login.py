@@ -797,6 +797,7 @@ class Aplicativo:
                         pausa_tecnica=False
                         for j,idx in enumerate(indices,1):
                             if self.parar.is_set():break
+                            self.eventos.put(('hospital_consultando',(j,len(indices))))
                             while self.pausa.is_set() and not self.parar.wait(.25):pass
                             if self.parar.is_set():break
                             r=self.sessao.registros[idx]
@@ -1117,8 +1118,13 @@ class Aplicativo:
                 passos+=1
                 if evento=='diagnostico_tecnico':
                     acao,resultado,indice,segundos,categoria=dado
-                    self.estatisticas.diagnosticar(acao,resultado,ordinal=indice,
-                                                  segundos=segundos,categoria=categoria)
+                    try:
+                        self.estatisticas.diagnosticar(
+                            acao,resultado,ordinal=indice,segundos=segundos,categoria=categoria)
+                    except (TypeError,ValueError):
+                        # Nunca deixar um evento inesperado matar o loop Tk.
+                        # Ignora dados arbitrarios, sem registra-los em arquivo.
+                        pass
                 elif evento=='preparo_fase':
                     self.atividade_preparo.set(dado[0])
                 elif evento=='preparo_inicio':
@@ -1228,6 +1234,10 @@ class Aplicativo:
                     self._iniciar_lote()
                 elif evento=='hospital_iniciado':
                     self.progresso_hospital.set(f'Iniciando {dado} consultas hospitalares...')
+                elif evento=='hospital_consultando':
+                    numero,total=dado
+                    self.progresso_hospital.set(
+                        f'Pesquisando AIH {numero}/{total} · aguarde o carregamento do SISREG...')
                 elif evento=='hospital_item':
                     idx,resultado,duracao,contador,total=dado
                     self.tentativas_hospital += 1
@@ -1547,9 +1557,7 @@ class Aplicativo:
                         'O checkpoint não pôde ser gravado. Deseja encerrar '
                         'e descartar as alterações ainda não salvas?'):
                     return
-            self.navegacao_falhou=True
-            self.processando=False
-            self._fechar_aplicacao()
+            self._encerrar_confirmado_sem_relatorio()
             return
         self.parar.set();self.pausa.clear();self.aguardar_humano.confirmar()
         self.login_pendente=False;self.usuario.set('');self.senha.set('')
@@ -1566,6 +1574,25 @@ class Aplicativo:
             self.root.after(250,self._aguardar_encerramento)
         else:
             self._fechar_aplicacao()
+
+    def _encerrar_confirmado_sem_relatorio(self):
+        """Saida solicitada e confirmada APOS tentativa de salvar checkpoint.
+
+        A geracao do relatorio pode depender de eventos do worker travado.
+        Nao bloquear destroy com essas rotinas quando a operadora confirmou
+        a interrupcao. Thread do navegador e daemon.
+        """
+        self.parar.set()
+        self.pausa.clear()
+        self.aguardar_humano.confirmar()
+        self.navegacao_falhou=True
+        self.processando=False
+        try:
+            if self.historico and not self.historico.termino:
+                self.historico.encerrar('INTERROMPIDA')
+        except (OSError, ValueError):
+            pass
+        self.root.destroy()
 
     def _fechar_aplicacao(self):
         if self.preparo_concluido and not self.relatorio_finalizado and not self.persistencia_falhou:
