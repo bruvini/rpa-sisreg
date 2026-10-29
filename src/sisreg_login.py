@@ -1591,3 +1591,18 @@ class Aplicativo:
             self.status.set('O navegador não respondeu. Clique novamente em Encerrar '
                             'para confirmar a saída ou aguarde o encerramento normal.')
         self.root.after(500,self._aguardar_encerramento)
+
+
+def main():
+    # Teste real do executável empacotado sem iniciar consultas SISREG.
+    # Só ativado pela opção explícita usada no GitHub Actions.
+    if sys.argv[1:] == ['--smoke-test']:
+        Path('rpa_sisreg_smoke.ok').write_text(APP_VERSION + ':OK', encoding='utf-8')
+        return
+    root=tk.Tk()
+    Aplicativo(root)
+    root.mainloop()
+
+
+if __name__ == '__main__':
+    main()

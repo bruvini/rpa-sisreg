@@ -1,6 +1,6 @@
 # RPA SISREG — Conferência automatizada de internações
 
-![Versão](https://img.shields.io/badge/vers%C3%A3o-0.7.11-07436b) ![Python](https://img.shields.io/badge/Python-3.12-3776AB) ![Licença](https://img.shields.io/badge/c%C3%B3digo-MIT-555555)
+![Versão](https://img.shields.io/badge/vers%C3%A3o-0.7.12-07436b) ![Python](https://img.shields.io/badge/Python-3.12-3776AB) ![Licença](https://img.shields.io/badge/c%C3%B3digo-MIT-555555)
 
 > **A máquina executa o trabalho repetitivo; o fiscal analisa as exceções e toma a decisão.**
 
@@ -46,6 +46,17 @@ manualmente em PDFs e no SISREG. O código pode ser reutilizado sob os termos de
 A planilha hospitalar de entrada e o PDF são **somente leitura**. A cópia enriquecida
 é gerada automaticamente sem apagar o original. Na estação de trabalho, mantenha
 o Excel fechado enquanto o lote é processado.
+
+## Inicialização do executável e teste real do artefato (v0.7.12)
+
+- Restaurada a função `main()` e a chamada do ponto de entrada, que haviam
+  sido removidas por engano no final do módulo na v0.7.11.
+- Além dos testes unitários, o Windows CI agora **executa o .exe empacotado**
+  em modo de verificação isolada: exige um marcador produzido pelo próprio
+  `main()`; um EXE que inicia e sai sem abrir a aplicação falha na compilação.
+- O modo `--smoke-test` não abre o SISREG, não solicita credenciais e não
+  processa arquivos. Ele apenas valida o ponto de entrada.
+- Ao abrir normalmente (sem argumentos), a interface Tkinter é iniciada.
 
 ## Correção de leitura e encerramento (v0.7.11)
 

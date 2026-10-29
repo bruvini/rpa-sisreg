@@ -1,4 +1,6 @@
 import importlib.util
+import ast
+from unittest.mock import patch
 import pathlib
 import unittest
 
@@ -85,3 +87,23 @@ class SegurancaETestes(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+class TesteInicializacaoDoExecutavel(unittest.TestCase):
+    def test_entrypoint_nao_pode_ser_removido(self):
+        arvore = ast.parse(PATH.read_text(encoding='utf-8'))
+        funcoes = {n.name for n in arvore.body if isinstance(n, ast.FunctionDef)}
+        self.assertIn('main', funcoes)
+        guardas = [n for n in arvore.body if isinstance(n, ast.If)
+                   and isinstance(n.test, ast.Compare)
+                   and isinstance(n.test.left, ast.Name)
+                   and n.test.left.id == '__name__']
+        self.assertTrue(any(isinstance(n, ast.Expr) and isinstance(n.value, ast.Call)
+                            and isinstance(n.value.func, ast.Name)
+                            and n.value.func.id == 'main'
+                            for g in guardas for n in g.body))
+
+    def test_main_deve_criar_janela_tkinter(self):
+        with patch.object(app.tk, 'Tk') as criar, patch.object(app, 'Aplicativo') as aplicativo:
+            app.main()
+            aplicativo.assert_called_once_with(criar.return_value)
+            criar.return_value.mainloop.assert_called_once()

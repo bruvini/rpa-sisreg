@@ -37,6 +37,18 @@ jobs:
         run: python scripts/preparar_compilacao.py
       - name: Gerar RPA_SISREG.exe
         run: python -m PyInstaller --noconfirm --clean --onefile --windowed --name RPA_SISREG --icon assets/Logo-SISREG.ico --add-data "assets;assets" --paths src --version-file versao_windows.txt --collect-all playwright --collect-all pymupdf --collect-all openpyxl src/sisreg_login.py
+      - name: Testar entrada real do EXE compilado
+        shell: pwsh
+        run: |
+          $marcador = Join-Path $env:RUNNER_TEMP "rpa_sisreg_smoke.ok"
+          Remove-Item -Path $marcador -ErrorAction SilentlyContinue
+          $exe = (Resolve-Path "dist/RPA_SISREG.exe").Path
+          $processo = Start-Process -FilePath $exe -ArgumentList "--smoke-test" -WorkingDirectory $env:RUNNER_TEMP -PassThru -Wait
+          if ($processo.ExitCode -ne 0) { throw "Executavel retornou erro na inicializacao: $($processo.ExitCode)" }
+          if (-not (Test-Path -Path $marcador)) { throw "Executavel nao executou a funcao main()." }
+          $resultado = (Get-Content -Path $marcador -Raw).Trim()
+          if ($resultado -ne "0.7.12:OK") { throw "Marcador de inicializacao inesperado." }
+          Remove-Item -Path $marcador -ErrorAction SilentlyContinue
       - name: Registrar SHA-256 do executavel
         shell: pwsh
         run: |
