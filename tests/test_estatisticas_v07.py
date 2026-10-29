@@ -10,7 +10,7 @@ from app_info import APP_VERSION
 
 class EstatisticasV07(unittest.TestCase):
     def test_versao(self):
-        self.assertEqual(APP_VERSION, '0.7.9')
+        self.assertEqual(APP_VERSION, '0.7.10')
 
     def test_denominadores_taxa(self):
         self.assertEqual(percentual(750,784),'95.7%')

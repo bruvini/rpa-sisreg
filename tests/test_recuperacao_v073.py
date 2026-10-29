@@ -97,7 +97,7 @@ class TesteMigracaoLegada(unittest.TestCase):
         self.assertTrue(copia.exists())
 
     def test_versao_eh_consistente(self):
-        self.assertEqual(APP_VERSION,'0.7.9')
+        self.assertEqual(APP_VERSION,'0.7.10')
 
 @unittest.skipUnless(os.environ.get('SISREG_GUI_TEST')=='1','Exige ambiente gráfico')
 class TesteLogFalha(unittest.TestCase):

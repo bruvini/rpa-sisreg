@@ -59,7 +59,7 @@ class TestesEstruturados(unittest.TestCase):
         self.assertEqual(rotulo_situacao('CPF_NAO_CONFIRMADO_RESULTADO'),
                          'CPF não identificado na ficha cadastral')
     def test_versao(self):
-        self.assertEqual(APP_VERSION,'0.7.9')
+        self.assertEqual(APP_VERSION,'0.7.10')
 
 @unittest.skipUnless(os.environ.get('SISREG_DOM_TEST')=='1',
                      'Requer Chromium Playwright local; sem acesso externo')
