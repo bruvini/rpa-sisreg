@@ -1,6 +1,6 @@
 # RPA SISREG — Conferência automatizada de internações
 
-![Versão](https://img.shields.io/badge/vers%C3%A3o-0.7.12-07436b) ![Python](https://img.shields.io/badge/Python-3.12-3776AB) ![Licença](https://img.shields.io/badge/c%C3%B3digo-MIT-555555)
+![Versão](https://img.shields.io/badge/vers%C3%A3o-0.7.13-07436b) ![Python](https://img.shields.io/badge/Python-3.12-3776AB) ![Licença](https://img.shields.io/badge/c%C3%B3digo-MIT-555555)
 
 > **A máquina executa o trabalho repetitivo; o fiscal analisa as exceções e toma a decisão.**
 
@@ -46,6 +46,17 @@ manualmente em PDFs e no SISREG. O código pode ser reutilizado sob os termos de
 A planilha hospitalar de entrada e o PDF são **somente leitura**. A cópia enriquecida
 é gerada automaticamente sem apagar o original. Na estação de trabalho, mantenha
 o Excel fechado enquanto o lote é processado.
+
+## Leitura por cabeçalhos e resiliência (v0.7.13)
+
+- Caráter: identifica a linha "Caráter | Classificação de Risco" e lê a primeira célula da linha seguinte.
+- Procedimento: identifica "Procedimento Solicitado | Código" e lê somente a segunda célula da linha seguinte.
+- Solicitação: extrai o número associado ao texto "Código Solicitação"; confirma a AIH exata antes e depois da leitura.
+- Não utiliza a posição fixa das linhas para caráter e procedimento. Códigos ausentes e ambíguos permanecem pendentes para auditoria.
+- Leitura de resultados paginados em uma operação DOM por página; preserva o limite de páginas e a exigência de AIH exata.
+- Corrige a aceitação do evento PAGINA_RESULTADOS no módulo de estatísticas e protege a atualização da interface contra eventos inválidos.
+- Saída confirmada após tentativas de salvamento ignora a geração de relatório quando o navegador não responde, evitando bloquear a interface.
+- Testes sintéticos; validação em sessão SISREG real continua necessária.
 
 ## Inicialização do executável e teste real do artefato (v0.7.12)
 

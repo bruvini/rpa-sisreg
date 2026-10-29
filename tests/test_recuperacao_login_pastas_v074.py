@@ -21,7 +21,7 @@ FIXTURE = ROOT/'tests'/'fixtures'/'hospital_sintetico.xlsx'
 
 class TestesPastasEPrivacidade(unittest.TestCase):
     def test_versao_central(self):
-        self.assertEqual(APP_VERSION, '0.7.12')
+        self.assertEqual(APP_VERSION, '0.7.13')
 
     def test_exe_congelado_define_raiz_sem_meipass(self):
         with tempfile.TemporaryDirectory() as diretorio:
