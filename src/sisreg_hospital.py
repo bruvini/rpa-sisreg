@@ -16,11 +16,12 @@ OPCAO_HOSP = 'xpath=//*[@id="barraMenu"]/ul/li[5]/ul/li[1]/a'
 CAMPO_CNS = 'xpath=//*[@id="main_page"]/form/center[1]/table/tbody/tr[3]/td[2]/input'
 BTN_PESQUISAR = 'input[name="enviar"][type="button"][onclick*="pesquisar"]'
 FICHA = '#fichaInternacao'
-CARATER = 'xpath=//*[@id="fichaInternacao"]/table/tbody/tr[44]/td[1]'
-# A ficha identifica este valor como CÓDIGO DE SOLICITAÇÃO, não autorizador.
-CODIGO_SOLICITACAO = 'xpath=//*[@id="fichaInternacao"]/table/tbody/tr[1]/td[1]/b'
+# Seletores confirmados na ficha em 29/10/2026.
+CARATER = '#fichaInternacao > table > tbody > tr:nth-child(46) > td:nth-child(1)'
+# Código da solicitação não é necessariamente o código autorizador.
+CODIGO_SOLICITACAO = '#fichaInternacao > table > tbody > tr:nth-child(1) > td:nth-child(1) > b'
 # Sem seletor independente validado, não inferir o código autorizador.
-PROCEDIMENTO = 'xpath=//*[@id="fichaInternacao"]/table/tbody/tr[48]/td[2]'
+PROCEDIMENTO = '#fichaInternacao > table > tbody > tr:nth-child(50) > td:nth-child(2)'
 PAGINADOR_PROXIMO = '#main_page > form > center:nth-child(9) > table > tbody > tr > td > a > img'
 MAX_PAGINAS_RESULTADO = 100
 
@@ -230,36 +231,85 @@ def selecionar_linha_aih(pagina, aih: str, espera_ms: int = 15000, observador=No
     raise NavegacaoInesperada('Limite de páginas alcançado; busca inconclusiva.')
 
 
-def obter_detalhes(pagina, aih: str, procedimento_hospital: str = '') -> ResultadoHospital:
+def _paginas_para_ficha(pagina):
+    """Pesquisa somente páginas oficiais da sessão, incluindo popups."""
+    contexto = getattr(pagina, 'context', None)
     try:
-        frame, ficha = _encontrar(pagina, FICHA, tempo=16000)
-    except NavegacaoInesperada:
-        return ResultadoHospital('FICHA_NAO_ABERTA', 'A ficha de internação não apareceu após selecionar a AIH.')
-    origem_autorizada(frame)
-    texto = ficha.inner_text(timeout=9000)
+        paginas = list(contexto.pages) if contexto is not None else []
+    except Exception:
+        paginas = []
+    if pagina not in paginas:
+        paginas.append(pagina)
+    for candidata in reversed(paginas):
+        try:
+            if getattr(candidata, 'is_closed', lambda: False)():
+                continue
+            origem_autorizada(candidata)
+            yield candidata
+        except (NavegacaoInesperada, ValueError):
+            continue
+
+
+def _localizar_ficha_da_aih(pagina, aih: str, espera_ms: int = 16000):
+    """Não confunde ficha antiga com a AIH buscada, nem depende da janela."""
     procurada = normalizar_aih(aih)
-    # O número precisa estar no detalhe, independentemente da linha selecionada.
-    numeros = re.findall(r'(?<!\d)\d{12}-?\d(?!\d)', texto)
-    if procurada not in {normalizar_aih(v) for v in numeros}:
-        return ResultadoHospital('AIH_NAO_COMPROVADA_FICHA', 'AIH não aparece identificável na ficha aberta.')
+    if not procurada:
+        return None, 'AIH_NAO_COMPROVADA_FICHA'
+    fim = time.monotonic() + max(0, espera_ms) / 1000
+    outra_ficha = False
+    while True:
+        for candidata in _paginas_para_ficha(pagina):
+            try:
+                frame, ficha = _encontrar(candidata, FICHA, tempo=350)
+                origem_autorizada(frame)
+                texto = ficha.inner_text(timeout=1800)
+            except Exception:
+                continue
+            outra_ficha = True
+            numeros = re.findall(r'(?<!\d)\d{12}-?\d(?!\d)', texto)
+            if procurada in {normalizar_aih(v) for v in numeros}:
+                return frame, ''
+        if time.monotonic() >= fim:
+            break
+        time.sleep(.25)
+    return None, ('AIH_NAO_COMPROVADA_FICHA' if outra_ficha else 'FICHA_NAO_ABERTA')
+
+
+def obter_detalhes(pagina, aih: str, procedimento_hospital: str = '',
+                   espera_ficha_ms: int = 16000) -> ResultadoHospital:
+    frame, falha = _localizar_ficha_da_aih(pagina, aih, espera_ms=espera_ficha_ms)
+    if falha == 'FICHA_NAO_ABERTA':
+        return ResultadoHospital('FICHA_NAO_ABERTA',
+                                 'A ficha de internação não apareceu após selecionar a AIH.')
+    if falha:
+        return ResultadoHospital('AIH_NAO_COMPROVADA_FICHA',
+                                 'Nenhuma ficha aberta comprovou a AIH pesquisada.')
     try:
-        _, campo_carater = _encontrar(pagina, CARATER, tempo=2500)
-        _, campo_solic = _encontrar(pagina, CODIGO_SOLICITACAO, tempo=2500)
-        _, campo_proc = _encontrar(pagina, PROCEDIMENTO, tempo=2500)
+        # Ler campos do mesmo quadro cuja AIH foi confirmada.
+        _, campo_carater = _encontrar(frame, CARATER, tempo=2500)
+        _, campo_solic = _encontrar(frame, CODIGO_SOLICITACAO, tempo=2500)
+        _, campo_proc = _encontrar(frame, PROCEDIMENTO, tempo=2500)
         carater = obter_carater(campo_carater.inner_text(timeout=3000))
         solicitacao = obter_autorizador(campo_solic.inner_text(timeout=3000))
         procedimento = obter_procedimento(campo_proc.inner_text(timeout=3000))
     except Exception:
-        return ResultadoHospital('CAMPOS_FICHA_NAO_CONFIRMADOS', 'Seletores de caráter, autorizador ou procedimento mudaram.')
+        return ResultadoHospital('CAMPOS_FICHA_NAO_CONFIRMADOS',
+                                 'Seletores de caráter, solicitação ou procedimento não confirmados.')
     if not carater or not solicitacao or not procedimento:
-        return ResultadoHospital('CAMPOS_FICHA_INCOMPLETOS', 'Os três dados não puderam ser extraídos com segurança.')
+        return ResultadoHospital('CAMPOS_FICHA_INCOMPLETOS',
+                                 'Caráter, solicitação ou procedimento não extraídos com segurança.')
     esperado = digitos(procedimento_hospital)
-    if esperado and (len(esperado) != 10 or esperado != procedimento):
+    if len(esperado) != 10:
+        return ResultadoHospital('PROCEDIMENTO_NAO_CONFIRMADO',
+                                 'Procedimento hospitalar ausente/inválido: comparação não realizada.',
+                                 carater, '', procedimento, solicitacao)
+    if esperado != procedimento:
         return ResultadoHospital('PROCEDIMENTO_DIVERGENTE',
-                                'Código solicitado na ficha difere do informado pelo hospital; exige revisão.',
-                                carater, '', procedimento, solicitacao)
-    return ResultadoHospital('FICHA_CONFERIDA', 'AIH exata localizada; procedimento compatível com o hospital.',
-                            carater, '', procedimento, solicitacao)
+                                 'Procedimento da ficha difere do informado pelo hospital.',
+                                 carater, '', procedimento, solicitacao)
+    return ResultadoHospital('FICHA_CONFERIDA',
+                             'AIH exata localizada e procedimento compatível.',
+                             carater, '', procedimento, solicitacao)
 
 
 def consultar_solicitacao_hospitalar(pagina, cns: str, aih: str,
@@ -293,6 +343,7 @@ def consultar_solicitacao_hospitalar(pagina, cns: str, aih: str,
                     'AIH_NAO_COMPROVADA_FICHA':'AIH_NAO_CONFIRMADA',
                     'CAMPOS_FICHA_NAO_CONFIRMADOS':'SELETOR_NAO_ENCONTRADO',
                     'CAMPOS_FICHA_INCOMPLETOS':'CAMPOS_FICHA_INCOMPLETOS',
+                    'PROCEDIMENTO_NAO_CONFIRMADO':'CAMPOS_FICHA_INCOMPLETOS',
                 }.get(resultado.situacao, 'ERRO_NAO_CLASSIFICADO')
             observador(acao, situacao, time.perf_counter()-inicio, categoria)
     return resultado

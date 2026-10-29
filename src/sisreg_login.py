@@ -750,6 +750,7 @@ class Aplicativo:
                 browser=p.chromium.launch(channel=canal,headless=False)
                 contexto=browser.new_context(accept_downloads=False)
                 pagina=contexto.new_page()
+                pagina_principal=pagina
                 try:
                     pagina.goto(URL_SISREG,wait_until='domcontentloaded',timeout=45000)
                     submeter_login(pagina,usuario,senha)
@@ -805,13 +806,24 @@ class Aplicativo:
                                     raise NavegacaoInesperada('VERIFICACAO_HUMANA_EXIGIDA')
                                 validas=[pg for pg in contexto.pages if not pg.is_closed() and endereco_oficial(pg.url)]
                                 if not validas:raise NavegacaoInesperada('Sessão SISREG encerrada.')
-                                pagina=validas[-1]
+                                # Não usar popup de ficha para pesquisar o próximo CNS.
+                                pagina=(pagina_principal
+                                        if not pagina_principal.is_closed() and endereco_oficial(pagina_principal.url)
+                                        else validas[0])
                                 def observador(acao,estado,tempo_fase,categoria):
                                     self.eventos.put(('diagnostico_tecnico',
                                         (acao,estado,j,tempo_fase,categoria)))
                                 resultado=consultar_solicitacao_hospitalar(
                                     pagina,r.cns,r.aih,r.procedimento,observador=observador)
-                                erros_seguidos=0
+                                # Ficha incompleta conta como erro técnico, mesmo
+                                # quando a função retorna sem exceção.
+                                if resultado.situacao in (
+                                        'FICHA_NAO_ABERTA', 'AIH_NAO_COMPROVADA_FICHA',
+                                        'CAMPOS_FICHA_NAO_CONFIRMADOS',
+                                        'CAMPOS_FICHA_INCOMPLETOS'):
+                                    erros_seguidos+=1
+                                else:
+                                    erros_seguidos=0
                             except Exception as exc:
                                 # Erro de gateway é indisponibilidade do serviço,
                                 # não ausência da AIH. Não emitir nova pesquisa.
@@ -840,6 +852,7 @@ class Aplicativo:
                                 'AIH_NAO_COMPROVADA_FICHA':'AIH_NAO_CONFIRMADA',
                                 'CAMPOS_FICHA_INCOMPLETOS':'CAMPOS_FICHA_INCOMPLETOS',
                                 'CAMPOS_FICHA_NAO_CONFIRMADOS':'SELETOR_NAO_ENCONTRADO',
+                                'PROCEDIMENTO_NAO_CONFIRMADO':'CAMPOS_FICHA_INCOMPLETOS',
                                 'FALHA_NAVEGACAO':'FALHA_NAVEGACAO'}).get(resultado.situacao,
                                 'ERRO_NAO_CLASSIFICADO' if falha else 'NENHUM')
                             self.eventos.put(('diagnostico_tecnico',('FICHA_HOSPITALAR',

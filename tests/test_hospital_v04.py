@@ -145,20 +145,20 @@ class TesteFichaHospitalar(unittest.TestCase):
         from unittest.mock import patch
         def loc(page,selector,**kwargs):return page,_TextoLoc('AIH 900000000012-4')
         with patch('sisreg_hospital._encontrar',loc):
-            r=obter_detalhes(_FichePage(),'9000000000123','0408050063')
+            r=obter_detalhes(_FichePage(),'9000000000123','0408050063',espera_ficha_ms=25)
         self.assertEqual(r.situacao,'AIH_NAO_COMPROVADA_FICHA')
 
     def test_ficha_codigo_procedimento_diferente_sinalizado(self):
         from unittest.mock import patch
         d={
           '#fichaInternacao':'AIH 900000000012-3 NOME TESTE',
-          'xpath=//*[@id="fichaInternacao"]/table/tbody/tr[44]/td[1]':'10 - ELETIVO',
-          'xpath=//*[@id="fichaInternacao"]/table/tbody/tr[1]/td[1]/b':'0004532108',
-          'xpath=//*[@id="fichaInternacao"]/table/tbody/tr[48]/td[2]':'0409040193',
+          '#fichaInternacao > table > tbody > tr:nth-child(46) > td:nth-child(1)':'10 - ELETIVO',
+          '#fichaInternacao > table > tbody > tr:nth-child(1) > td:nth-child(1) > b':'0004532108',
+          '#fichaInternacao > table > tbody > tr:nth-child(50) > td:nth-child(2)':'0409040193',
         }
         def loc(page,selector,**kwargs):return page,_TextoLoc(d[selector])
         with patch('sisreg_hospital._encontrar',loc):
-            r=obter_detalhes(_FichePage(),'9000000000123','0408050063')
+            r=obter_detalhes(_FichePage(),'9000000000123','0408050063',espera_ficha_ms=25)
         self.assertEqual(r.situacao,'PROCEDIMENTO_DIVERGENTE')
         self.assertEqual(r.carater,'10')
         self.assertEqual(r.solicitacao,'0004532108')

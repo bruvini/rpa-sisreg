@@ -1,6 +1,6 @@
 # RPA SISREG — Conferência automatizada de internações
 
-![Versão](https://img.shields.io/badge/vers%C3%A3o-0.7.9-07436b) ![Python](https://img.shields.io/badge/Python-3.12-3776AB) ![Licença](https://img.shields.io/badge/c%C3%B3digo-MIT-555555)
+![Versão](https://img.shields.io/badge/vers%C3%A3o-0.7.10-07436b) ![Python](https://img.shields.io/badge/Python-3.12-3776AB) ![Licença](https://img.shields.io/badge/c%C3%B3digo-MIT-555555)
 
 > **A máquina executa o trabalho repetitivo; o fiscal analisa as exceções e toma a decisão.**
 
@@ -46,6 +46,18 @@ manualmente em PDFs e no SISREG. O código pode ser reutilizado sob os termos de
 A planilha hospitalar de entrada e o PDF são **somente leitura**. A cópia enriquecida
 é gerada automaticamente sem apagar o original. Na estação de trabalho, mantenha
 o Excel fechado enquanto o lote é processado.
+
+## Confirmação da ficha após paginação (v0.7.10)
+
+- Seletores atualizados: solicitação (linha 1), caráter (linha 46) e
+  procedimento (linha 50).
+- Depois da pesquisa paginada, confirma a AIH exata na ficha, inclusive em
+  popups oficiais da mesma sessão; fichas antigas não autorizam preenchimento.
+- Mantém a página principal como origem das novas consultas por CNS.
+- Falhas na leitura da ficha entram na suspensão técnica; procedimento
+  hospitalar ausente/inválido não resulta em falsa compatibilidade.
+- Mantém XLSX, checkpoints e retomadas anteriores. A validação no SISREG real
+  ainda é necessária; os testes usam apenas dados sintéticos.
 
 ## Paginação hospitalar e diagnóstico da sessão (v0.7.9)
 

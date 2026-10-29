@@ -1,5 +1,5 @@
 """Identificação única da aplicação e data de compilação, quando disponível."""
-APP_VERSION = '0.7.9'
+APP_VERSION = '0.7.10'
 APP_NAME = 'RPA SISREG'
 try:
     from build_info import BUILD_DATE_UTC
