@@ -24,7 +24,7 @@ def reg(**kwargs):
 
 
 class TesteRetomada(unittest.TestCase):
-    def test_versao(self):self.assertEqual(APP_VERSION,'0.7.10')
+    def test_versao(self):self.assertEqual(APP_VERSION,'0.7.11')
     def test_exemplo_de_cem_registros(self):
         p=resumo_progresso(100,30,70,65)
         self.assertEqual(p.acumulados,95)
