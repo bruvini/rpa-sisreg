@@ -18,7 +18,7 @@ def reg(st):
                     '11144477735','900000000000001','','',situacao=st)
 
 class TesteSituacoes(unittest.TestCase):
-    def test_versao(self): self.assertEqual(APP_VERSION,'0.7.10')
+    def test_versao(self): self.assertEqual(APP_VERSION,'0.7.11')
     def test_nao_encontrado_no_pdf(self):
         self.assertEqual(situacao_final(reg('AIH_AUSENTE_NO_PDF')),'Não encontrado no espelho de AIH')
     def test_dados_divergentes_pdf(self):
