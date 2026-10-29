@@ -1,6 +1,6 @@
 # RPA SISREG — Conferência automatizada de internações
 
-![Versão](https://img.shields.io/badge/vers%C3%A3o-0.7.10-07436b) ![Python](https://img.shields.io/badge/Python-3.12-3776AB) ![Licença](https://img.shields.io/badge/c%C3%B3digo-MIT-555555)
+![Versão](https://img.shields.io/badge/vers%C3%A3o-0.7.11-07436b) ![Python](https://img.shields.io/badge/Python-3.12-3776AB) ![Licença](https://img.shields.io/badge/c%C3%B3digo-MIT-555555)
 
 > **A máquina executa o trabalho repetitivo; o fiscal analisa as exceções e toma a decisão.**
 
@@ -46,6 +46,18 @@ manualmente em PDFs e no SISREG. O código pode ser reutilizado sob os termos de
 A planilha hospitalar de entrada e o PDF são **somente leitura**. A cópia enriquecida
 é gerada automaticamente sem apagar o original. Na estação de trabalho, mantenha
 o Excel fechado enquanto o lote é processado.
+
+## Correção de leitura e encerramento (v0.7.11)
+
+- Aguarda novamente os campos e, se as linhas mudarem, procura rótulos
+  explícitos na mesma ficha; valores conflitantes permanecem pendentes.
+- Confirma outra vez a AIH após a leitura e antes de gravar.
+- Interrupção cooperativa na paginação e na espera da ficha; registros
+  cancelados não são marcados como ausentes.
+- Se o navegador demorar mais de 15 segundos para responder, um segundo
+  clique em Encerrar oferece saída confirmada, com salvamento de checkpoint
+  e aviso de possível perda do último item ainda em processamento.
+- Mantém logs sem nomes, CPF, CNS, AIHs ou HTML. Homologação real pendente.
 
 ## Confirmação da ficha após paginação (v0.7.10)
 

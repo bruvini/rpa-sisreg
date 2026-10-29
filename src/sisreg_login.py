@@ -814,7 +814,8 @@ class Aplicativo:
                                     self.eventos.put(('diagnostico_tecnico',
                                         (acao,estado,j,tempo_fase,categoria)))
                                 resultado=consultar_solicitacao_hospitalar(
-                                    pagina,r.cns,r.aih,r.procedimento,observador=observador)
+                                    pagina,r.cns,r.aih,r.procedimento,observador=observador,
+                                    cancelar=self.parar.is_set)
                                 # Ficha incompleta conta como erro técnico, mesmo
                                 # quando a função retorna sem exceção.
                                 if resultado.situacao in (
@@ -841,6 +842,8 @@ class Aplicativo:
                                               'Consulta não finalizada. Revisar a tela do SISREG.')
                                 self.eventos.put(('diagnostico_tecnico',('FICHA_HOSPITALAR',
                                    'ERRO',j,time.perf_counter()-inicio,categoria_excecao(type(exc).__name__))))
+                            if self.parar.is_set():
+                                break  # Não criar pendência falsa ao cancelar a consulta.
                             if desafio_visivel(contexto):
                                 hospital_suspenso=True
                                 self.eventos.put(('hospital_alerta',
@@ -1531,7 +1534,25 @@ class Aplicativo:
         ttk.Button(frame,text='Fechar',command=janela.destroy).pack(anchor='e',pady=(10,0))
 
     def encerrar(self):
-        self.parar.set();self.pausa.clear();self.login_pendente=False;self.usuario.set('');self.senha.set('')
+        if getattr(self, '_fechamento_lento', False):
+            from tkinter import messagebox
+            sair=messagebox.askyesno('Encerrar com navegador sem resposta?',
+                'O SISREG não respondeu à interrupção. A planilha será salva '
+                'antes de sair, mas a consulta ainda em andamento pode ser '
+                'perdida. Deseja encerrar a aplicação mesmo assim?')
+            if not sair:
+                return
+            if self.preparo_concluido and self.sessao.origem and not self._salvar_checkpoint():
+                if not messagebox.askyesno('Falha ao salvar a planilha',
+                        'O checkpoint não pôde ser gravado. Deseja encerrar '
+                        'e descartar as alterações ainda não salvas?'):
+                    return
+            self.navegacao_falhou=True
+            self.processando=False
+            self._fechar_aplicacao()
+            return
+        self.parar.set();self.pausa.clear();self.aguardar_humano.confirmar()
+        self.login_pendente=False;self.usuario.set('');self.senha.set('')
         # Caso o processo esteja ativo, a janela aguarda a gravação de resultados recebidos.
         if self.persistencia_falhou and not self.processando:
             from tkinter import messagebox
@@ -1540,6 +1561,7 @@ class Aplicativo:
                 return
         if self.processando or (self.thread_navegador and self.thread_navegador.is_alive()):
             self.status.set('Encerrando a sessão SISREG e concluindo eventuais salvamentos...')
+            self._fechamento_lento=False
             self._prazo_fechamento = time.monotonic() + 15
             self.root.after(250,self._aguardar_encerramento)
         else:
@@ -1552,29 +1574,20 @@ class Aplicativo:
         try:
             self._resumir_historico()
             if self.historico and not self.historico.termino:
-                self.historico.encerrar('INTERROMPIDA' if self.parar.is_set() and
-                        self.navegacao_falhou else 'CONCLUIDA' if self.preparo_concluido else 'INTERROMPIDA')
+                self.historico.encerrar('INTERROMPIDA' if self.parar.is_set()
+                        else 'CONCLUIDA' if self.preparo_concluido else 'INTERROMPIDA')
         except (OSError,ValueError):pass
         self.usuario.set('');self.senha.set('')
         self.root.destroy()
 
     def _aguardar_encerramento(self):
         ativo = self.processando or bool(self.thread_navegador and self.thread_navegador.is_alive())
-        if ativo and time.monotonic() < self._prazo_fechamento:
-            self.root.after(250,self._aguardar_encerramento)
-        elif ativo:
-            # Não encerra abruptamente com salvamento ainda ativo: é melhor
-            # manter a janela aberta e permitir recuperação pela operadora.
-            self.status.set('Encerramento demorando. Aguarde terminar a gravação/fechamento do navegador.')
-            self._prazo_fechamento = time.monotonic() + 15
-            self.root.after(500,self._aguardar_encerramento)
-        else:
+        if not ativo:
+            self._fechamento_lento=False
             self._fechar_aplicacao()
-
-
-def main():
-    root=tk.Tk()
-    Aplicativo(root)
-    root.mainloop()
-
-if __name__=='__main__':main()
+            return
+        if time.monotonic() >= self._prazo_fechamento and not getattr(self, '_fechamento_lento', False):
+            self._fechamento_lento=True
+            self.status.set('O navegador não respondeu. Clique novamente em Encerrar '
+                            'para confirmar a saída ou aguarde o encerramento normal.')
+        self.root.after(500,self._aguardar_encerramento)

@@ -62,3 +62,36 @@ class TesteFichaV0710(unittest.TestCase):
         self.assertEqual(comparacao_procedimento(registro), 'Não conferido')
 
 if __name__=='__main__': unittest.main()
+
+
+class TesteFichaV0711(unittest.TestCase):
+    def test_campos_por_rotulo_em_linhas_diferentes(self):
+        from sisreg_hospital import _ler_tres_campos
+        quadro = Pagina()
+        linhas = SimpleNamespace(all_inner_texts=lambda **k: [
+            'CÓDIGO DA SOLICITAÇÃO 670478410',
+            'CARÁTER DA INTERNAÇÃO',
+            '10 - ELETIVO',
+            'CÓDIGO DO PROCEDIMENTO',
+            '0408050063 - PROCEDIMENTO'
+        ])
+        quadro.locator = lambda seletor: linhas
+        with patch('sisreg_hospital._encontrar', side_effect=NavegacaoInesperada('Linha deslocada')):
+            valores, erro = _ler_tres_campos(quadro, espera_ms=100)
+        self.assertEqual(erro, '')
+        self.assertEqual(valores, ('10','670478410','0408050063'))
+
+    def test_procedimentos_ambiguos_nao_sao_adivinhados(self):
+        from sisreg_hospital import _campos_por_rotulo
+        quadro=Pagina()
+        linhas=SimpleNamespace(all_inner_texts=lambda **k: [
+            'CÓDIGO DO PROCEDIMENTO', '0408050063 - PROCEDIMENTO',
+            'CÓDIGO DO PROCEDIMENTO', '0409040193 - PROCEDIMENTO'
+        ])
+        quadro.locator=lambda seletor:linhas
+        self.assertEqual(_campos_por_rotulo(quadro)[2], '')
+
+    def test_cancelar_localizacao_da_ficha(self):
+        from sisreg_hospital import _localizar_ficha_da_aih
+        with self.assertRaises(NavegacaoInesperada):
+            _localizar_ficha_da_aih(Pagina(), AIH, espera_ms=16000, cancelar=lambda:True)
