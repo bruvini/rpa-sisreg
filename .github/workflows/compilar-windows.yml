@@ -47,7 +47,8 @@ jobs:
           if ($processo.ExitCode -ne 0) { throw "Executavel retornou erro na inicializacao: $($processo.ExitCode)" }
           if (-not (Test-Path -Path $marcador)) { throw "Executavel nao executou a funcao main()." }
           $resultado = (Get-Content -Path $marcador -Raw).Trim()
-          if ($resultado -ne "0.7.12:OK") { throw "Marcador de inicializacao inesperado." }
+          $versao = (python -c "import sys; sys.path.insert(0, 'src'); from app_info import APP_VERSION; print(APP_VERSION)").Trim()
+          if ($resultado -ne "${versao}:OK") { throw "Marcador de inicializacao inesperado para a versao ${versao}." }
           Remove-Item -Path $marcador -ErrorAction SilentlyContinue
       - name: Registrar SHA-256 do executavel
         shell: pwsh
