@@ -1544,6 +1544,8 @@ class Aplicativo:
         ttk.Button(frame,text='Fechar',command=janela.destroy).pack(anchor='e',pady=(10,0))
 
     def encerrar(self):
+        if getattr(self, '_salvando_ao_sair', False):
+            return
         if getattr(self, '_fechamento_lento', False):
             from tkinter import messagebox
             sair=messagebox.askyesno('Encerrar com navegador sem resposta?',
@@ -1552,12 +1554,7 @@ class Aplicativo:
                 'perdida. Deseja encerrar a aplicação mesmo assim?')
             if not sair:
                 return
-            if self.preparo_concluido and self.sessao.origem and not self._salvar_checkpoint():
-                if not messagebox.askyesno('Falha ao salvar a planilha',
-                        'O checkpoint não pôde ser gravado. Deseja encerrar '
-                        'e descartar as alterações ainda não salvas?'):
-                    return
-            self._encerrar_confirmado_sem_relatorio()
+            self._salvar_e_encerrar_confirmado()
             return
         self.parar.set();self.pausa.clear();self.aguardar_humano.confirmar()
         self.login_pendente=False;self.usuario.set('');self.senha.set('')
@@ -1594,6 +1591,49 @@ class Aplicativo:
             pass
         self.root.destroy()
 
+    def _salvar_e_encerrar_confirmado(self):
+        """Grava fora do loop Tk; uma chamada de arquivo lenta não prende a janela."""
+        if getattr(self, '_salvando_ao_sair', False):
+            return
+        if not self.preparo_concluido or not self.sessao.origem:
+            self._encerrar_confirmado_sem_relatorio()
+            return
+        self._salvando_ao_sair = True
+        self.parar.set()
+        self.pausa.clear()
+        self.aguardar_humano.confirmar()
+        pronto = threading.Event()
+        resultado = {'salvo': False}
+        def gravar():
+            try:
+                self.sessao.salvar_na_planilha(motivo='encerramento')
+                resultado['salvo'] = True
+            except Exception:
+                self.persistencia_falhou = True
+            finally:
+                pronto.set()
+        threading.Thread(target=gravar, daemon=True).start()
+        limite = time.monotonic() + 15
+        def acompanhar():
+            if pronto.is_set():
+                self._salvando_ao_sair = False
+                if resultado['salvo']:
+                    self._encerrar_confirmado_sem_relatorio()
+                elif messagebox.askyesno('Falha ao salvar a planilha',
+                        'O checkpoint não pôde ser gravado. Deseja encerrar e '
+                        'descartar as alterações ainda não salvas?'):
+                    self._encerrar_confirmado_sem_relatorio()
+                return
+            if time.monotonic() >= limite:
+                self._salvando_ao_sair = False
+                if messagebox.askyesno('Salvamento sem resposta',
+                        'O salvamento ainda não terminou. Deseja encerrar a aplicação? '
+                        'As alterações recentes podem não estar na planilha.'):
+                    self._encerrar_confirmado_sem_relatorio()
+                return
+            self.root.after(150, acompanhar)
+        self.root.after(150, acompanhar)
+
     def _fechar_aplicacao(self):
         if self.preparo_concluido and not self.relatorio_finalizado and not self.persistencia_falhou:
             try: self._finalizar_relatorio()
@@ -1608,6 +1648,9 @@ class Aplicativo:
         self.root.destroy()
 
     def _aguardar_encerramento(self):
+        if getattr(self, '_salvando_ao_sair', False):
+            self.root.after(500,self._aguardar_encerramento)
+            return
         ativo = self.processando or bool(self.thread_navegador and self.thread_navegador.is_alive())
         if not ativo:
             self._fechamento_lento=False

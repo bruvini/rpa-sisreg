@@ -44,7 +44,7 @@ class ResultadoHospital:
 def obter_carater(texto: str) -> str:
     t = (texto or '').strip().upper()
     # Um código isolado ou precedendo a descrição: sem adivinhar valores.
-    achado = re.search(r'(?<!\d)(\d{1,2})(?!\d)\s*(?:[-–:]\s*[A-ZÁÉÍÓÚ]|$)', t)
+    achado = re.search(r'(?:^|:\s*)(\d{1,2})(?!\d)(?:\s*[-–:]?\s*[A-ZÁÉÍÓÚ].*|\s*)$', t)
     if achado:
         return achado.group(1).zfill(2)
     if re.fullmatch(r'\d{1,2}', t):
@@ -61,6 +61,10 @@ def obter_autorizador(texto: str) -> str:
 
 def obter_procedimento(texto: str) -> str:
     codigos = re.findall(r'(?<!\d)\d{10}(?!\d)', texto or '')
+    if not codigos and re.fullmatch(r'[\d.\-/\s]+', (texto or '').strip()):
+        agrupado = digitos(texto)
+        if len(agrupado) == 10:
+            codigos = [agrupado]
     return codigos[0] if len(set(codigos)) == 1 and codigos else ''
 
 
@@ -307,41 +311,48 @@ def _normalizar_rotulo(texto):
 
 
 def _extrair_campos_de_linhas(linhas):
-    """Le campos por cabecalhos do SISREG e a linha seguinte, nao por indice.
-
-    Cada entrada eh uma lista de textos de TDs da mesma TR. O cabecalho de
-    carater fica ao lado de Classificacao de Risco; procedimento solicitado
-    fica ao lado de Codigo. O valor e lido APENAS da linha imediatamente
-    seguinte e na coluna correspondente. Duplicidade gera campo vazio.
-    """
+    """Associa rótulos e valores próximos sem usar a posição absoluta da TR."""
     candidatos = {'carater':set(),'solicitacao':set(),'procedimento':set()}
     if not isinstance(linhas, (list,tuple)):
         return '', '', ''
-    for pos, valores in enumerate(linhas[:160]):
+    linhas = linhas[:160]
+    for pos, valores in enumerate(linhas):
         if not isinstance(valores,(list,tuple)) or not valores:
             continue
         rotulos = [_normalizar_rotulo(c) for c in valores]
-        primeiro = rotulos[0]
-        segundo = rotulos[1] if len(rotulos)>1 else ''
-        if primeiro.startswith('CODIGO SOLICITACAO'):
-            # O primeiro TD e um texto da forma Codigo Solicitacao: <b>numero</b>.
-            trecho = re.sub(r'^CODIGO SOLICITACAO\s*:?\s*', '', primeiro)
-            codigo = obter_autorizador(trecho)
-            if codigo:
-                candidatos['solicitacao'].add(codigo)
-        if pos + 1 >= len(linhas):
-            continue
-        seguintes = linhas[pos + 1]
-        if not isinstance(seguintes,(list,tuple)) or not seguintes:
-            continue
-        if primeiro == 'CARATER' and segundo == 'CLASSIFICACAO DE RISCO':
-            codigo = obter_carater(seguintes[0])
-            if codigo:
-                candidatos['carater'].add(codigo)
-        if primeiro == 'PROCEDIMENTO SOLICITADO' and segundo == 'CODIGO' and len(seguintes)>1:
-            # Texto da primeira celula identifica o procedimento; segunda e SIGTAP.
-            if str(seguintes[0]).strip():
-                codigo = obter_procedimento(seguintes[1])
+        for indice, rotulo in enumerate(rotulos):
+            if rotulo.startswith('CODIGO SOLICITACAO'):
+                trecho = re.sub(r'^CODIGO SOLICITACAO\s*:?\s*', '', rotulo)
+                codigo = obter_autorizador(trecho)
+                if codigo:
+                    candidatos['solicitacao'].add(codigo)
+            if rotulo.startswith('CARATER'):
+                # Valor na mesma célula ou na mesma coluna da próxima linha útil.
+                trecho = re.sub(r'^CARATER(?: DA INTERNACAO)?\s*:?\s*', '', rotulo)
+                codigo = obter_carater(trecho)
+                if not codigo:
+                    for seguinte in linhas[pos + 1:pos + 3]:
+                        if isinstance(seguinte,(list,tuple)) and indice < len(seguinte):
+                            candidato = _normalizar_rotulo(seguinte[indice])
+                            if candidato and not candidato.startswith(('CLASSIFICACAO', 'PROCEDIMENTO', 'CARATER')):
+                                codigo = obter_carater(candidato)
+                                break
+                if codigo:
+                    candidatos['carater'].add(codigo)
+            if rotulo.startswith('PROCEDIMENTO SOLICITADO'):
+                # Código pode estar na célula "Código" ao lado ou na linha de dados.
+                indice_codigo = next((j for j in range(indice + 1,len(rotulos))
+                    if rotulos[j].startswith('CODIGO')), None)
+                if indice_codigo is None:
+                    continue
+                codigo = obter_procedimento(re.sub(r'^CODIGO\s*:?\s*', '', rotulos[indice_codigo]))
+                if not codigo:
+                    for seguinte in linhas[pos + 1:pos + 3]:
+                        if isinstance(seguinte,(list,tuple)) and indice_codigo < len(seguinte):
+                            candidato = _normalizar_rotulo(seguinte[indice_codigo])
+                            if candidato and not candidato.startswith(('CODIGO', 'PROCEDIMENTO')):
+                                codigo = obter_procedimento(candidato)
+                                break
                 if codigo:
                     candidatos['procedimento'].add(codigo)
     def unico(chave):

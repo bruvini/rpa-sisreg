@@ -44,4 +44,21 @@ class TesteRotulos(unittest.TestCase):
         self.assertEqual(_extrair_campos_de_linhas(
             [SOLIC,HEAD_C,DATA_C,HEAD_P,['0408050063','DESCRICAO']])[2],'')
 
+    def test_rotulos_com_variacao_e_linha_vazia(self):
+        linhas=[['Código Solicitação: 670478410'],
+                ['Caráter da Internação:', 'Classificação de Risco:'],
+                ['', ''], ['1 Eletivo', 'Prioridade 2'],
+                ['Procedimento Solicitado:', 'Código:'],
+                ['', ''], ['PROCEDIMENTO SINTETICO', '04.08.05.006-3']]
+        self.assertEqual(_extrair_campos_de_linhas(linhas),
+                         ('01','670478410','0408050063'))
+
+    def test_valores_na_mesma_linha_e_conflito(self):
+        linhas=[['Código Solicitação: 670478410'],
+                ['Caráter: 10 - Eletivo', 'Classificação de Risco'],
+                ['Procedimento Solicitado:', 'Código: 0408050063'],
+                ['Caráter: 02 - Urgência']]
+        self.assertEqual(_extrair_campos_de_linhas(linhas),
+                         ('','670478410','0408050063'))
+
 if __name__=='__main__': unittest.main()
