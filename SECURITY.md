@@ -4,7 +4,7 @@ Contato técnico: Enf. Bruno Vinícius — bruno.vinicius@joinville.sc.gov.br.
 
 ## Estado e escopo
 
-A versão atual é a **v0.7.21**, em validação operacional assistida. A versão mantida é o fonte da `main` e seus artefatos aprovados no GitHub Actions. Testes automatizados e uso assistido não equivalem a homologação institucional de todas as situações reais.
+A versão atual é a **v0.7.22**, em validação operacional assistida. A versão mantida é o fonte da `main` e seus artefatos aprovados no GitHub Actions. Testes automatizados e uso assistido não equivalem a homologação institucional de todas as situações reais.
 
 O programa realiza consultas no SISREG III e processa PDF/XLSX localmente, em estação e sessão autorizadas. Não altera solicitações, cancela internações, aprova produção ou realiza atesto fiscal. Autorização de acesso, finalidade, perfil mínimo, guarda e descarte seguem a política da SMS/Regulação/TI. A licença do código não concede acesso ao SISREG.
 
@@ -20,6 +20,8 @@ O programa realiza consultas no SISREG III e processa PDF/XLSX localmente, em es
 ## Diagnósticos e divulgação
 
 `Logs/` reúne relatórios e históricos JSON/JSONL com versão, horários, contagens, hashes, ordinais, etapa, duração e categorias controladas. Não deve registrar nomes, CPF, CNS, AIHs, valores do DOM, HTML, capturas, URLs de consulta, senhas, cookies ou tokens. Uma ocorrência pode aparecer em mais de uma operação; categorias de log não equivalem a pacientes distintos ou falhas finais.
+
+O diagnóstico de reCAPTCHA observa passivamente as respostas e falhas dos recursos conhecidos do Google e consulta apenas a disponibilidade da API e a presença do iframe no documento oficial. O TXT específico usa categorias fechadas, versão e horário; não registra URLs completas, parâmetros, cabeçalhos, chave do site ou conteúdo do desafio. Não são emitidas sondagens adicionais, lidos tokens de resposta ou alteradas proteções do navegador.
 
 Os arquivos de resultado são a referência para os dados coletados. Resumos administrativos antigos podem conter contagens incompletas; uma sessão interrompida pode ter resultados válidos já salvos. Não conclua perda dos dados ou execução completa apenas pelo estado do histórico.
 

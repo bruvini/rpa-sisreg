@@ -82,6 +82,7 @@ class TesteFluxoTk(unittest.TestCase):
         import tkinter as tk
         self.tk=tk.Tk()
         self.app=Aplicativo(self.tk)
+        self.tk.withdraw()
         self.tk.update()
 
     def tearDown(self):

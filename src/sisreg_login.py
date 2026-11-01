@@ -25,6 +25,7 @@ from planilha import SessaoPlanilha
 from retomada import SaudeLote, selecionar_cadastros
 from progresso import resumo_progresso, candidato_hospitalar, ficha_hospitalar_completa
 from controle_sessao import AguardarHumano, desafio_visivel, servidor_indisponivel
+from diagnostico_recaptcha import MonitorRecaptcha, ROTULOS as ROTULOS_RECAPTCHA
 from sisreg_navigation import NavegacaoInesperada
 from sisreg_hospital import consultar_solicitacao_hospitalar, ResultadoHospital
 import threading
@@ -238,6 +239,7 @@ class Aplicativo:
         self.inicio_preparo=None
         self.tipo_lote='cadastro'
         self.status=tk.StringVar(value='Selecione a planilha-padrão e o espelho PDF do hospital.')
+        self.detalhe_verificacao=tk.StringVar(value='')
         self.resumo=tk.StringVar(value='Nenhuma conferência carregada.')
         self.progresso=tk.StringVar(value='Aguardando preparação.')
         self.resumo_cadastro=tk.StringVar(value='Taxa de completude: aguardando consulta.')
@@ -831,6 +833,7 @@ class Aplicativo:
     def _exibir_verificacao(self, causa):
         """Executada somente na thread Tk; sem CAPTCHA em log nem dados clínicos."""
         self.intervencao_pendente=True
+        self.detalhe_verificacao.set('Aguardando diagnóstico do carregamento da verificação.')
         self.browser_ready=False
         self.aviso_verificacao.pack(anchor='w',pady=(6,3))
         self.btn_verificacao.pack(anchor='w',pady=(0,8))
@@ -845,18 +848,19 @@ class Aplicativo:
         if self.janela_verificacao is None or not self.janela_verificacao.winfo_exists():
             janela=tk.Toplevel(self.root)
             janela.title('RPA SISREG — atendimento necessário')
-            janela.geometry('545x285')
+            janela.geometry('545x365')
             janela.resizable(False,False)
             janela.transient(self.root)
             area=ttk.Frame(janela,padding=18);area.pack(fill='both',expand=True)
             ttk.Label(area,text='SISREG: verificação ou reconexão necessária',
                       font=('Segoe UI',12,'bold'),wraplength=500).pack(anchor='w',pady=(0,9))
             ttk.Label(area,text='As consultas estão pausadas e os dados já coletados foram preservados. '
-                      'Conclua a verificação ou regularize a conexão no navegador oficial. '
-                      'Depois clique no botão abaixo.',wraplength=490,justify='left').pack(anchor='w')
+                      'Conclua o desafio e confirme na própria página do SISREG, ou regularize a conexão no navegador. '
+                      'Depois volte ao RPA e clique no botão abaixo.',wraplength=490,justify='left').pack(anchor='w')
             ttk.Label(area,text='Se o SISREG pedir verificação sem mostrar o desafio, aguarde a disponibilidade '
                       'do serviço. A confirmação só retoma as consultas quando a sessão for validada.',
                       wraplength=490,justify='left').pack(anchor='w',pady=(8,0))
+            ttk.Label(area,textvariable=self.detalhe_verificacao,wraplength=490,justify='left').pack(anchor='w',pady=(8,0))
             botoes=ttk.Frame(area);botoes.pack(side='bottom',fill='x',pady=(16,0))
             self.btn_modal_confirmar=ttk.Button(botoes,text='Verificar sessão e retomar',
                                                command=self._confirmar_verificacao)
@@ -895,6 +899,7 @@ class Aplicativo:
         """
         self.aguardar_humano.confirmacao.clear()
         self.eventos.put(('verificacao_pendente',origem))
+        self._diagnosticar_recaptcha(contexto)
         while self.aguardar_humano.esperar(self.parar,self.reiniciar_navegador):
             try:
                 if desafio_visivel(contexto):
@@ -909,8 +914,35 @@ class Aplicativo:
                     pendentes=getattr(self,'_hospital_pendentes_intervencao',None) if origem=='hospital' else None
                     self.eventos.put(('sessao_recuperada',(origem,pendentes)))
                 return True
+            self._diagnosticar_recaptcha(contexto)
             self.eventos.put(('verificacao_incompleta',origem))
         return False
+
+    def _diagnosticar_recaptcha(self,contexto):
+        monitor=getattr(self,'monitor_recaptcha',None)
+        if monitor is not None:
+            self.eventos.put(('verificacao_diagnostico',monitor.resumo(contexto)))
+
+    def _registrar_diagnostico_recaptcha(self,categorias):
+        # A lista fechada impede que dados do DOM, URLs ou erros livres cheguem ao TXT.
+        codigos=sorted({c for c in categorias if isinstance(c,str) and c in ROTULOS_RECAPTCHA})
+        if not codigos:return
+        rede=[c for c in codigos if c.startswith(('CAPTCHA_REDE_','CAPTCHA_HTTP_','CAPTCHA_DOCUMENTO_'))]
+        estado=(rede or [c for c in codigos if c in ('CAPTCHA_API_AUSENTE','CAPTCHA_IFRAME_AUSENTE')]
+                or [c for c in codigos if c.startswith('CAPTCHA_IFRAME_')] or codigos)
+        self.detalhe_verificacao.set('Carregamento: '+ROTULOS_RECAPTCHA[estado[0]])
+        for codigo in codigos:
+            self.estatisticas.diagnosticar('RECAPTCHA_CARREGAMENTO','PENDENCIA',categoria=codigo)
+        try:
+            _,logs=pastas_de_saida()
+            destino=logs/('DIAGNOSTICO_RECAPTCHA_'+datetime.now().strftime('%d%m%Y_%H%M%S_%f')+'.txt')
+            linhas=['RPA SISREG — diagnóstico de carregamento da verificação',
+                    'Versão: '+APP_VERSION,'Horário: '+datetime.now().astimezone().isoformat(),
+                    'Leitura passiva. Presença de iframe ou HTTP 200 não comprova exibição nem resolução do desafio.']
+            linhas.extend(codigo+' | '+ROTULOS_RECAPTCHA[codigo] for codigo in codigos)
+            destino.write_text('\n'.join(linhas)+'\n',encoding='utf-8')
+        except OSError:
+            self.status.set('A verificação continua pausada. Não foi possível salvar o diagnóstico de carregamento.')
 
     def _iniciar_login(self):
         if not self.preparo_concluido or self.carregando:
@@ -955,6 +987,7 @@ class Aplicativo:
             with sync_playwright() as p:
                 browser=p.chromium.launch(channel=canal,headless=False)
                 contexto=browser.new_context(accept_downloads=False)
+                self.monitor_recaptcha=MonitorRecaptcha(contexto)
                 pagina=contexto.new_page()
                 pagina_principal=pagina
                 try:
@@ -1471,6 +1504,8 @@ class Aplicativo:
                         self.btn_modal_confirmar.configure(state='normal')
                         self.janela_verificacao.deiconify()
                     self.status.set('Acesso ainda indisponível. Continue a verificação no navegador e confirme novamente.')
+                elif evento=='verificacao_diagnostico':
+                    self._registrar_diagnostico_recaptcha(dado)
                 elif evento=='sessao_recuperada':
                     self._ocultar_verificacao()
                     self.browser_ready=True

@@ -1,6 +1,6 @@
 # RPA SISREG — Conferência de internações em lote
 
-![Versão](https://img.shields.io/badge/vers%C3%A3o-0.7.21-07436b) ![Python](https://img.shields.io/badge/Python-3.12-3776AB) ![Licença](https://img.shields.io/badge/c%C3%B3digo-MIT-555555)
+![Versão](https://img.shields.io/badge/vers%C3%A3o-0.7.22-07436b) ![Python](https://img.shields.io/badge/Python-3.12-3776AB) ![Licença](https://img.shields.io/badge/c%C3%B3digo-MIT-555555)
 
 Aplicação desktop para Windows que lê planilhas XLSX e espelhos de AIH em PDF, complementa CPF, consulta CNS no SISREG III e confere os dados da solicitação hospitalar. A automação consulta o SISREG e organiza os resultados localmente. **Não altera solicitações, não aprova produção e não realiza atesto fiscal.**
 
@@ -41,10 +41,12 @@ Para repetir várias consultas: escolha o filtro, clique em **Selecionar todos d
 Falhas técnicas transitórias recebem uma tentativa adicional. Falhas consecutivas ou indisponibilidade podem pausar o lote para evitar resultados incorretos.
 
 1. Diante de verificação humana ou perda de sessão, o RPA pausa novas consultas, preserva os resultados recebidos e mantém o registro em andamento pendente.
-2. Regularize o acesso no navegador oficial e clique em **Verificar sessão e retomar** no RPA.
+2. Regularize o acesso no navegador oficial. Se houver desafio, resolva-o e clique em **Confirmar na própria página do SISREG**. Depois volte ao RPA e clique em **Verificar sessão e retomar**.
 3. O aplicativo valida a sessão e continua pelos registros pendentes, sem repetir os já concluídos.
 
 O SISREG pode pedir verificação sem conseguir exibir o desafio. Aguarde a disponibilidade do serviço; o RPA não cria nem resolve CAPTCHA. Confirmar não força a retomada se a sessão ainda estiver indisponível. Se o navegador tiver fechado, entre novamente na etapa 2; as etapas concluídas e a seleção de revisão são preservadas.
+
+O aviso informa o diagnóstico do carregamento e salva `Logs/DIAGNOSTICO_RECAPTCHA_<data_hora>.txt`, com versão, horário e categorias de rede/API/iframe. Essa observação é passiva e não guarda URLs, cookies, tokens, HTML ou dados de pacientes. HTTP 200 e iframe presente não comprovam que o desafio foi exibido. Consulte o [guia de diagnóstico](docs/diagnostico-captcha.md).
 
 **Interromper**, **Encerrar** e o **X** iniciam o encerramento com salvamento dos resultados recebidos. Se o navegador não responder, uma confirmação permite encerrar apenas o processo criado pelo RPA. Uma consulta ainda sem resultado pode precisar de nova pesquisa. Falhas de salvamento aparecem na interface e impedem apresentar a execução como concluída com segurança.
 
@@ -69,7 +71,7 @@ Na execução aprovada, abra **Artifacts > RPA_SISREG_Windows** e extraia `RPA_S
 
 Antes de um lote amplo, confira poucos casos na sessão autorizada: AIH na primeira página, outra em página posterior, troca aprovada e, quando ocorrer, retomada após verificação humana. Testes sintéticos e inicialização do executável não substituem essa conferência.
 
-Últimas alterações: [v0.7.21](CHANGELOG_v0721.md), [v0.7.20](CHANGELOG_v0720.md) e [v0.7.19](CHANGELOG_v0719.md).
+Documentação: [índice](docs/README.md), [histórico de versões](CHANGELOG.md) e [diagnóstico de CAPTCHA](docs/diagnostico-captcha.md).
 
 ## Créditos e licença
 

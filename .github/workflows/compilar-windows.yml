@@ -8,9 +8,11 @@ on:
       - 'assets/**'
       - 'scripts/**'
       - 'README.md'
+      - 'SECURITY.md'
+      - 'CHANGELOG.md'
+      - 'docs/**'
       - 'tests/**'
       - 'requirements-build.txt'
-      - 'compilar_windows.ps1'
       - '.github/workflows/compilar-windows.yml'
 permissions:
   contents: read

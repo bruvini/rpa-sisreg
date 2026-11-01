@@ -41,7 +41,7 @@ class FakePlaywright:
     def __exit__(self,*a):return False
 
 class TesteCAPTCHA(unittest.TestCase):
-    def test_versao(self):self.assertEqual(APP_VERSION,'0.7.21')
+    def test_versao(self):self.assertEqual(APP_VERSION,'0.7.22')
     def test_texto_sisreg_detectado(self):
         self.assertTrue(texto_exige_verificacao('Devido a grande quantidade de requisições (> 500) ... CAPTCHA'))
         self.assertTrue(texto_exige_verificacao('Teste automatizado para diferenciação entre computadores e humanos'))
@@ -77,9 +77,13 @@ class TesteCAPTCHA(unittest.TestCase):
              patch('sisreg_login.autenticao_ativa',return_value=True) as autenticar:
             t=threading.Thread(target=app._navegador_worker,args=('ficticio','senha-ficticia','chrome'))
             t.start()
+            self.addCleanup(t.join,3)
+            self.addCleanup(app.parar.set)
             primeiro=app.eventos.get(timeout=2)
             segundo=app.eventos.get(timeout=2)
             self.assertEqual((primeiro[0],segundo[0]),('login_enviado','verificacao_pendente'))
+            diagnostico=app.eventos.get(timeout=2)
+            self.assertEqual(diagnostico[0],'verificacao_diagnostico')
             # O timeout legado de 45 s não existe mais no trecho que aguarda humano.
             # Aqui verificamos que a espera não tenta autenticar nem fecha a página.
             time.sleep(.35)

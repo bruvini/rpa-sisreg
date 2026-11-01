@@ -1,6 +1,6 @@
 # Compilar somente em Windows autorizado ou GitHub Actions com dados sintéticos.
 $ErrorActionPreference = 'Stop'
-Set-Location $PSScriptRoot
+Set-Location (Split-Path -Parent $PSScriptRoot)
 python -m pip install -r requirements-build.txt
 python -m unittest discover -s tests -v
 python scripts/preparar_compilacao.py

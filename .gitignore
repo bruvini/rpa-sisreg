@@ -25,4 +25,5 @@ Logs/
 *.backup_antes_RPA.xlsx
 Planilha_RPA_*.xlsx
 RELATORIO_TECNICO_RPA_*.txt
+DIAGNOSTICO_RECAPTCHA_*.txt
 *.sisregaudit
