@@ -11,6 +11,7 @@ from sisreg_hospital import (consultar_solicitacao_hospitalar, obter_detalhes,
     _ler_tres_campos, selecionar_linha_aih, _ler_tabela_de_resultados,
     _campos_por_rotulo, FalhaLeituraTabela, FalhaLeituraFicha)
 from sisreg_navigation import NavegacaoInesperada
+from controle_sessao import desafio_visivel
 
 AIH = '9000000000123'
 PROC = '0408050063'
@@ -101,3 +102,11 @@ class TesteHospitalPlaywrightReal(unittest.TestCase):
         with patch('sisreg_hospital._quadros_oficiais',return_value=[frame]):
             with self.assertRaises(FalhaLeituraTabela):
                 _ler_tabela_de_resultados(self.page)
+
+    def test_verificacao_humana_no_frame_oficial(self):
+        self.page.route('**/verificacao-ficticia',lambda route: route.fulfill(
+            status=200,content_type='text/html; charset=utf-8',body='<body>CAPTCHA: verificação humana</body>'))
+        self.page.evaluate("""() => { const f=document.createElement('iframe');
+            f.src='https://sisregiii.saude.gov.br/verificacao-ficticia';document.body.appendChild(f); }""")
+        self.page.frame_locator('iframe').locator('body').wait_for()
+        self.assertTrue(desafio_visivel(self.page.context))

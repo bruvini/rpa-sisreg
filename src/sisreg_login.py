@@ -9,6 +9,8 @@ USO CONDICIONADO À AUTORIZAÇÃO DA REGULAÇÃO/TI.
 from __future__ import annotations
 
 import queue
+import multiprocessing
+import subprocess
 import sys
 import time
 import os
@@ -28,6 +30,7 @@ import threading
 import tkinter as tk
 from tkinter import ttk
 from urllib.parse import urlparse
+from types import SimpleNamespace
 from diretorios import pastas_de_saida
 from app_info import APP_VERSION, rotulo_versao
 from apresentacao import rotulo_situacao
@@ -45,6 +48,34 @@ XPATH_SENHA = "/html/body/div[1]/div/div[4]/form/div/div[1]/div[1]/div[5]/input"
 XPATH_ENTRAR = "/html/body/div[1]/div/div[4]/form/div/div[1]/div[1]/div[8]/input"
 
 VERSAO = APP_VERSION
+
+class SessaoHospitalSuspensa(NavegacaoInesperada):
+    pass
+
+def consultar_hospital_com_retentativa(pagina, registro, contexto, parar, observador):
+    """Uma nova tentativa técnica; nunca envia consultas durante verificação humana."""
+    tecnicas = {'FICHA_NAO_ABERTA', 'AIH_NAO_COMPROVADA_FICHA',
+                'CAMPOS_FICHA_NAO_CONFIRMADOS', 'CAMPOS_FICHA_INCOMPLETOS'}
+    for tentativa in range(2):
+        if parar.is_set() or desafio_visivel(contexto) or servidor_indisponivel(contexto):
+            raise NavegacaoInesperada('Consulta suspensa.')
+        try:
+            resultado = consultar_solicitacao_hospitalar(
+                pagina, registro.cns, registro.aih, registro.procedimento,
+                observador=observador, cancelar=parar.is_set)
+        except Exception:
+            if tentativa or parar.is_set() or desafio_visivel(contexto) or servidor_indisponivel(contexto):
+                raise
+        else:
+            if resultado.situacao not in tecnicas or tentativa:
+                return resultado
+        if not autenticao_ativa(pagina,timeout=2500):
+            raise SessaoHospitalSuspensa('Sessão hospitalar não confirmada.')
+        if observador:
+            observador('HOSPITAL_NOVA_TENTATIVA','INICIO',0.0,'FALHA_NAVEGACAO')
+        if parar.wait(1.8):
+            raise NavegacaoInesperada('Consulta interrompida.')
+    raise NavegacaoInesperada('Consulta não concluída.')
 MANUAL_SEGUNDOS_POR_AIH = 15
 AZUL = "#063c68"
 FUNDO = "#f2f6fa"
@@ -121,6 +152,17 @@ def submeter_login(page, usuario: str, senha: str) -> None:
 
 
 
+def _executar_navegador_isolado(eventos, comandos, parar, pausa, reiniciar, confirmacao,
+                                usuario, senha, canal):
+    """Executa Playwright em processo próprio; os dados trafegam apenas por IPC local."""
+    app=Aplicativo.__new__(Aplicativo)
+    app.eventos=eventos;app.comandos=comandos
+    app.parar=parar;app.pausa=pausa;app.reiniciar_navegador=reiniciar
+    app.aguardar_humano=AguardarHumano(confirmacao)
+    app.sessao=SimpleNamespace(registros=[])
+    app._navegador_worker(usuario,senha,canal)
+
+
 class Aplicativo:
     """Executa PDF em lote + pesquisa somente leitura por CPF, com status e retomada."""
 
@@ -144,14 +186,15 @@ class Aplicativo:
             except tk.TclError: pass
         root.configure(bg=FUNDO)
         root.protocol('WM_DELETE_WINDOW', self.encerrar)
-        self.eventos=queue.Queue()
-        self.comandos=queue.Queue()
-        self.parar=threading.Event()
-        self.pausa=threading.Event()
+        self.contexto_processos=multiprocessing.get_context('spawn')
+        self.eventos=self.contexto_processos.Queue()
+        self.comandos=self.contexto_processos.Queue()
+        self.parar=self.contexto_processos.Event()
+        self.pausa=self.contexto_processos.Event()
         self.thread_navegador=None
         self.login_pendente=False
-        self.reiniciar_navegador=threading.Event()
-        self.aguardar_humano=AguardarHumano()
+        self.reiniciar_navegador=self.contexto_processos.Event()
+        self.aguardar_humano=AguardarHumano(self.contexto_processos.Event())
         self.intervencao_pendente=False
         self.consultas_acumuladas=0
         self.sessao=SessaoPlanilha()
@@ -163,6 +206,9 @@ class Aplicativo:
         self.tentativas_hospital = 0
         self.acertos_hospital = 0
         self.falhas_hospital = 0
+        self.consultas_hospital_execucao = 0
+        self.acertos_hospital_execucao = 0
+        self.erros_hospital_execucao = 0
         self.consultas_cadastro = 0
         self.relatorio_finalizado = False
         self.ultima_fonte = None
@@ -212,11 +258,15 @@ class Aplicativo:
         estilo.configure('TFrame',background=FUNDO)
         estilo.configure('TLabel',background=FUNDO,foreground='#183b59',font=('Segoe UI',10))
         estilo.configure('TButton',font=('Segoe UI',10),padding=8)
+        estilo.configure('TNotebook',background=FUNDO,borderwidth=0)
+        estilo.configure('TNotebook.Tab',padding=(18,10),font=('Segoe UI',10,'bold'))
+        estilo.map('TNotebook.Tab',background=[('selected','#ffffff')],foreground=[('selected',AZUL)])
         estilo.configure('Acao.TButton',background=AZUL,foreground='#ffffff',font=('Segoe UI',10,'bold'),padding=9)
         estilo.map('Acao.TButton',background=[('active','#11669e')])
         estilo.configure('TEntry',font=('Segoe UI',11),padding=5)
         estilo.configure('Treeview',font=('Segoe UI',9),rowheight=24)
         estilo.configure('Treeview.Heading',font=('Segoe UI',9,'bold'))
+        estilo.map('Treeview',background=[('selected','#cbe7f6')],foreground=[('selected','#173c59')])
         topo=tk.Frame(self.root,bg=AZUL,height=82);topo.pack(fill='x');topo.pack_propagate(False)
         # Logo PNG incorporado ao EXE; sem dependência de arquivos externos no PC da Joice.
         self.logo_cabecalho = None
@@ -238,6 +288,9 @@ class Aplicativo:
         tk.Button(topo, text='ⓘ Sobre', command=self._sobre, bg='#174f79', fg='white',
                   borderwidth=0, cursor='hand2', font=('Segoe UI',10)).place(relx=0.985, y=22, anchor='ne')
         corpo=ttk.Frame(self.root,padding=13);corpo.pack(fill='both',expand=True)
+        self.indicador_etapa=tk.StringVar(value='ETAPA 1 DE 4  •  Preparar os arquivos')
+        ttk.Label(corpo,textvariable=self.indicador_etapa,foreground='#256747',
+                  font=('Segoe UI',10,'bold')).pack(anchor='w',pady=(0,8))
         self.abas=ttk.Notebook(corpo);self.abas.pack(fill='both',expand=True)
         a=ttk.Frame(self.abas,padding=12);b=ttk.Frame(self.abas,padding=12);c=ttk.Frame(self.abas,padding=12);d=ttk.Frame(self.abas,padding=16)
         self.abas.add(a,text='  1  Planilha e PDF  ')
@@ -285,7 +338,9 @@ class Aplicativo:
             self.tabela.heading(chave,text=titulo)
             self.tabela.column(chave,width=w,minwidth=45,stretch=(chave=='paciente'))
         scroll=ttk.Scrollbar(grade,orient='vertical',command=self.tabela.yview)
-        self.tabela.configure(yscrollcommand=scroll.set)
+        scroll_x=ttk.Scrollbar(grade,orient='horizontal',command=self.tabela.xview)
+        scroll_x.pack(side='bottom',fill='x')
+        self.tabela.configure(yscrollcommand=scroll.set,xscrollcommand=scroll_x.set)
         self.tabela.pack(side='left',fill='both',expand=True);scroll.pack(side='right',fill='y')
         ttk.Label(a,text='Não sobrescrevemos CPFs ou CNS existentes quando houver divergência. '
                   'O processo em lote não exige seleção individual de pacientes.',wraplength=930).pack(anchor='w',pady=(7,0))
@@ -341,7 +396,9 @@ class Aplicativo:
             self.tabela_cns.heading(chave,text=titulo)
             self.tabela_cns.column(chave,width=largura,minwidth=40,stretch=(chave=='paciente'))
         barra_cns=ttk.Scrollbar(quadro_cns,orient='vertical',command=self.tabela_cns.yview)
-        self.tabela_cns.configure(yscrollcommand=barra_cns.set)
+        barra_cns_x=ttk.Scrollbar(quadro_cns,orient='horizontal',command=self.tabela_cns.xview)
+        barra_cns_x.pack(side='bottom',fill='x')
+        self.tabela_cns.configure(yscrollcommand=barra_cns.set,xscrollcommand=barra_cns_x.set)
         self.tabela_cns.pack(side='left',fill='both',expand=True)
         barra_cns.pack(side='right',fill='y')
         ttk.Label(b,text='O RPA pesquisa CPF por CPF. Só grava CNS quando o resultado mostra nome '
@@ -363,6 +420,15 @@ class Aplicativo:
         self.btn_hospital.pack(side='left',padx=(0,10))
         ttk.Button(hf,text='Pausar / Retomar',command=self._pausar).pack(side='left',padx=(0,10))
         ttk.Button(hf,text='Interromper',command=self._interromper).pack(side='left')
+        ferramentas=ttk.Frame(c);ferramentas.pack(fill='x',pady=(10,0))
+        ttk.Label(ferramentas,text='Mostrar:').pack(side='left',padx=(0,6))
+        self.filtro_hospital=tk.StringVar(value='Todos')
+        filtro=ttk.Combobox(ferramentas,textvariable=self.filtro_hospital,state='readonly',width=25,
+                           values=('Todos','Falhas técnicas','AIHs não encontradas'))
+        filtro.pack(side='left',padx=(0,10))
+        filtro.bind('<<ComboboxSelected>>',lambda _e:self._aplicar_filtro_hospital())
+        ttk.Button(ferramentas,text='Pesquisar selecionados novamente',
+                   command=self._repetir_hospital_selecionados).pack(side='left')
         self.progresso_hospital=tk.StringVar(value='Aguardando conclusão da etapa 2 e autorização para consultar.')
         ttk.Label(c,textvariable=self.progresso_hospital,font=('Segoe UI',11,'bold')).pack(anchor='w',pady=(12,3))
         ttk.Label(c,textvariable=self.resumo_hospital,font=('Segoe UI',10,'bold')).pack(anchor='w',pady=(0,2))
@@ -376,11 +442,14 @@ class Aplicativo:
                        ('carater','Caráter',105),('procedimento','Procedimento',134),
                        ('solicitacao','Solicitação',143),('situacao','Situação',215)]
         self.tabela_hospital=ttk.Treeview(quadro_hosp,columns=[x[0] for x in colunas_hosp],show='headings',height=8)
+        self._ocultas_hospital=set()
         for chave,titulo,largura in colunas_hosp:
             self.tabela_hospital.heading(chave,text=titulo)
             self.tabela_hospital.column(chave,width=largura,minwidth=40,stretch=(chave=='paciente'))
         barra_hosp=ttk.Scrollbar(quadro_hosp,orient='vertical',command=self.tabela_hospital.yview)
-        self.tabela_hospital.configure(yscrollcommand=barra_hosp.set)
+        barra_hosp_x=ttk.Scrollbar(quadro_hosp,orient='horizontal',command=self.tabela_hospital.xview)
+        barra_hosp_x.pack(side='bottom',fill='x')
+        self.tabela_hospital.configure(yscrollcommand=barra_hosp.set,xscrollcommand=barra_hosp_x.set)
         self.tabela_hospital.pack(side='left',fill='both',expand=True)
         barra_hosp.pack(side='right',fill='y')
         ttk.Label(c,text='O RPA pesquisa e organiza os dados. A análise das pendências e a decisão final continuam com o fiscal. Mantenha o Excel fechado durante as consultas.',
@@ -435,6 +504,10 @@ class Aplicativo:
 
     def _atualizar_avanco(self, _evento=None):
         if not hasattr(self,'btn_proxima'): return
+        if hasattr(self,'indicador_etapa'):
+            indice=self.abas.index(self.abas.select())
+            nomes=('Preparar os arquivos','Consultar cadastros','Consultar solicitações','Revisar resultados')
+            self.indicador_etapa.set(f'ETAPA {indice+1} DE 4  •  {nomes[indice]}')
         atual=self.abas.index(self.abas.select())
         pronto = ((atual==0 and self.preparo_concluido and not self.carregando) or
                   (atual==1 and self.cadastro_concluido and not self.processando) or
@@ -477,7 +550,41 @@ class Aplicativo:
                 (r.carater or '—') if ficha_confirmada else '—',
                 (r.procedimento_sisreg or r.comparacao_anterior or '—') if ficha_confirmada else '—',
                 referencia if ficha_confirmada else '—',
-                rotulo_situacao(r.situacao) if estado else 'Aguardando consulta')
+                rotulo_situacao(r.situacao) if estado else
+                (getattr(r,'situacao_anterior','') or 'Aguardando consulta'))
+
+    @staticmethod
+    def _grupo_hospital(r):
+        atual=str(getattr(r,'situacao','') or '')
+        anterior=str(getattr(r,'situacao_anterior','') or '')
+        consulta=str(getattr(r,'consulta_hospitalar','') or '')
+        if consulta:
+            if consulta=='AIH_NAO_LOCALIZADA_PAGINAS':
+                return 'AIHs não encontradas'
+            if consulta in ('FALHA_NAVEGACAO','FICHA_NAO_ABERTA','AIH_NAO_COMPROVADA_FICHA',
+                            'CAMPOS_FICHA_INCOMPLETOS','CAMPOS_FICHA_NAO_CONFIRMADOS'):
+                return 'Falhas técnicas'
+            return 'Outros'
+        if 'AIH_NAO_LOCALIZADA' in atual or anterior.startswith('AIH não encontrada após pesquisar'):
+            return 'AIHs não encontradas'
+        if (any(x in atual for x in ('FALHA_NAVEGACAO','FICHA_NAO_ABERTA','CAMPOS_FICHA_','AIH_NAO_COMPROVADA'))
+                or anterior.startswith(('Falha ou dados incompletos','Ficha da AIH não aberta'))):
+            return 'Falhas técnicas'
+        return 'Outros'
+
+    def _aplicar_filtro_hospital(self):
+        filtro=self.filtro_hospital.get()
+        for i in range(len(self.sessao.registros)):
+            self._atualizar_linha_hospital(i)
+
+    def _repetir_hospital_selecionados(self):
+        indices=[int(i) for i in self.tabela_hospital.selection()
+                 if self._grupo_hospital(self.sessao.registros[int(i)]) in
+                    ('Falhas técnicas','AIHs não encontradas')]
+        if not indices:
+            self.status.set('Selecione uma ou mais falhas técnicas ou AIHs não encontradas na tabela.')
+            return
+        self._iniciar_hospital(indices)
 
     def _atualizar_linha_hospital(self, indice):
         iid=str(indice)
@@ -486,6 +593,13 @@ class Aplicativo:
             self.tabela_hospital.item(iid,values=dados)
         else:
             self.tabela_hospital.insert('', 'end', iid=iid,values=dados)
+        filtro=self.filtro_hospital.get() if hasattr(self,'filtro_hospital') else 'Todos'
+        if filtro!='Todos' and self._grupo_hospital(self.sessao.registros[indice])!=filtro:
+            self.tabela_hospital.detach(iid)
+            self._ocultas_hospital.add(iid)
+        elif iid in self._ocultas_hospital:
+            self.tabela_hospital.move(iid,'','end')
+            self._ocultas_hospital.discard(iid)
 
     def _escolher_xlsx(self):
         arq=filedialog.askopenfilename(title='Planilha-padrão',filetypes=[('Excel','*.xlsx')])
@@ -529,6 +643,9 @@ class Aplicativo:
         self.abas.tab(1,state='disabled');self.abas.tab(2,state='disabled');self.abas.tab(3,state='disabled')
         self.estatisticas=Estatisticas()
         self.consultas_acumuladas=0
+        self.consultas_hospital_execucao=0
+        self.acertos_hospital_execucao=0
+        self.erros_hospital_execucao=0
         self.inicio_ciclo=time.perf_counter()
         self.relatorio_finalizado=False
         self.cartao_resultado.pack_forget()
@@ -619,11 +736,16 @@ class Aplicativo:
         for tabela in (self.tabela,self.tabela_cns):
             itens=tabela.get_children()
             if itens:tabela.delete(*itens)
+        itens_hospital=set(self.tabela_hospital.get_children()) | self._ocultas_hospital
+        if itens_hospital:
+            self.tabela_hospital.delete(*itens_hospital)
+        self._ocultas_hospital.clear()
         for i,r in enumerate(self.sessao.registros):
             if not r.cpf_origem:
                 self._atualizar_linha_visual(i,self._linha_visual(r))
             if not r.cns_origem:
                 self._atualizar_linha_visual(i,self._linha_visual(r,com_cns=True),True)
+            self._atualizar_linha_hospital(i)
 
     def _cns_totais(self):
         """Progresso acumulado do XLSX, independente do lote e de novo login."""
@@ -706,7 +828,8 @@ class Aplicativo:
                 confirmado=False
             if confirmado:
                 if origem != 'login':
-                    self.eventos.put(('sessao_recuperada',origem))
+                    pendentes=getattr(self,'_hospital_pendentes_intervencao',None) if origem=='hospital' else None
+                    self.eventos.put(('sessao_recuperada',(origem,pendentes)))
                 return True
             self.eventos.put(('verificacao_incompleta',origem))
         return False
@@ -732,7 +855,10 @@ class Aplicativo:
         canal='chrome' if self.navegador.get()=='Google Chrome' else 'msedge'
         self.usuario.set('');self.senha.set('');self.parar.clear()
         self.browser_ready=False;self.cadastro_concluido=False
-        self.thread_navegador=threading.Thread(target=self._navegador_worker,args=(u,s,canal),daemon=True)
+        self.thread_navegador=self.contexto_processos.Process(
+            target=_executar_navegador_isolado,
+            args=(self.eventos,self.comandos,self.parar,self.pausa,self.reiniciar_navegador,
+                  self.aguardar_humano.confirmacao,u,s,canal),daemon=True)
         self.thread_navegador.start();self.status.set('Abrindo nova sessão SISREG...')
 
     def _retomar_login_pendente(self):
@@ -789,12 +915,16 @@ class Aplicativo:
                         except Exception:
                             return
                         continue
+                    if isinstance(payload,dict) and 'registros' in payload:
+                        self.sessao.registros=payload['registros']
+                        payload=payload['indices']
                     if cmd == 'hospital':
                         indices=payload
                         self.eventos.put(('hospital_iniciado',len(indices)))
                         erros_seguidos=0
                         hospital_suspenso=False
                         pausa_tecnica=False
+                        restantes_em_espera=None
                         for j,idx in enumerate(indices,1):
                             if self.parar.is_set():break
                             self.eventos.put(('hospital_consultando',(j,len(indices))))
@@ -814,9 +944,8 @@ class Aplicativo:
                                 def observador(acao,estado,tempo_fase,categoria):
                                     self.eventos.put(('diagnostico_tecnico',
                                         (acao,estado,j,tempo_fase,categoria)))
-                                resultado=consultar_solicitacao_hospitalar(
-                                    pagina,r.cns,r.aih,r.procedimento,observador=observador,
-                                    cancelar=self.parar.is_set)
+                                resultado=consultar_hospital_com_retentativa(
+                                    pagina,r,contexto,self.parar,observador)
                                 # Ficha incompleta conta como erro técnico, mesmo
                                 # quando a função retorna sem exceção.
                                 if resultado.situacao in (
@@ -827,6 +956,12 @@ class Aplicativo:
                                 else:
                                     erros_seguidos=0
                             except Exception as exc:
+                                if isinstance(exc,SessaoHospitalSuspensa):
+                                    hospital_suspenso=True
+                                    restantes_em_espera=indices[j-1:]
+                                    self.eventos.put(('hospital_alerta',
+                                        'A sessão não pôde ser confirmada. Verifique o SISREG no navegador.'))
+                                    break
                                 # Erro de gateway é indisponibilidade do serviço,
                                 # não ausência da AIH. Não emitir nova pesquisa.
                                 if servidor_indisponivel(contexto):
@@ -847,6 +982,7 @@ class Aplicativo:
                                 break  # Não criar pendência falsa ao cancelar a consulta.
                             if desafio_visivel(contexto):
                                 hospital_suspenso=True
+                                restantes_em_espera=indices[j-1:]
                                 self.eventos.put(('hospital_alerta',
                                     'Acesso do SISREG indisponível ou requer verificação. Consulte o navegador e aguarde a recuperação.'))
                                 break
@@ -856,6 +992,7 @@ class Aplicativo:
                                 'AIH_NAO_COMPROVADA_FICHA':'AIH_NAO_CONFIRMADA',
                                 'CAMPOS_FICHA_INCOMPLETOS':'CAMPOS_FICHA_INCOMPLETOS',
                                 'CAMPOS_FICHA_NAO_CONFIRMADOS':'SELETOR_NAO_ENCONTRADO',
+                                'AIH_NAO_LOCALIZADA_PAGINAS':'AIH_NAO_LOCALIZADA_PAGINAS',
                                 'PROCEDIMENTO_NAO_CONFIRMADO':'CAMPOS_FICHA_INCOMPLETOS',
                                 'FALHA_NAVEGACAO':'FALHA_NAVEGACAO'}).get(resultado.situacao,
                                 'ERRO_NAO_CLASSIFICADO' if falha else 'NENHUM')
@@ -875,6 +1012,7 @@ class Aplicativo:
                                     autenticada=False
                                 if not autenticada:
                                     hospital_suspenso=True
+                                    restantes_em_espera=indices[j:]
                                     self.eventos.put(('hospital_alerta',
                                         'A sessão não pôde ser confirmada. Verifique o SISREG no navegador.'))
                                 else:
@@ -888,6 +1026,7 @@ class Aplicativo:
                         # Não declarar fim nem finalizar relatório enquanto houver
                         # CAPTCHA, sessão comprometida ou fila ainda incompleta.
                         if hospital_suspenso and not self.parar.is_set():
+                            self._hospital_pendentes_intervencao=restantes_em_espera
                             self.eventos.put(('hospital_suspenso',len(indices)))
                             if not self._esperar_intervencao(contexto,'hospital'):
                                 return
@@ -1048,14 +1187,15 @@ class Aplicativo:
         self.motivos_cadastro={}
         self.barra.configure(value=0)
         self.btn_lote.configure(state='disabled')
-        self.comandos.put(('lote',selecionados))
+        self.comandos.put(('lote',{'indices':selecionados,'registros':self._registros_para_navegador(selecionados)}))
         self.status.set(f'Lote iniciado: {len(selecionados)} cadastros pendentes; {self.revisao_anterior} para revisão humana. A etapa hospitalar iniciará automaticamente ao concluir.')
-    def _iniciar_hospital(self):
+    def _iniciar_hospital(self, selecionados=None):
         if self.processando:
             self.status.set('Outro lote em execução; aguarde sua conclusão.');return
         if not self.preparo_concluido or not self.cadastro_concluido or not self.thread_navegador or not self.thread_navegador.is_alive() or not self.browser_ready:
             self.status.set('Aguarde o fim das etapas 1 e 2 antes da consulta hospitalar.');return
-        candidatos=[i for i,r in enumerate(self.sessao.registros) if candidato_hospitalar(r)]
+        candidatos=([i for i,r in enumerate(self.sessao.registros) if candidato_hospitalar(r)]
+                    if selecionados is None else list(dict.fromkeys(selecionados)))
         self.hospital_universo=len(self.sessao.registros)
         self.hospital_aproveitados=sum(ficha_hospitalar_completa(r) for r in self.sessao.registros)
         self.hospital_previstos=len(candidatos)
@@ -1076,8 +1216,14 @@ class Aplicativo:
         self.persistencia_falhou=False;self.navegacao_falhou=False
         self.parar.clear();self.pausa.clear()
         self.btn_hospital.configure(state='disabled');self.barra_hospital.configure(value=0)
-        self.comandos.put(('hospital',candidatos))
+        self.comandos.put(('hospital',{'indices':candidatos,'registros':self._registros_para_navegador(candidatos)}))
         self.status.set(f'Etapa 3 iniciada: {len(candidatos)} AIHs para consulta, sem escolher posições fixas na tabela.')
+
+    def _registros_para_navegador(self, indices):
+        selecionados=set(indices)
+        return [SimpleNamespace(cpf=r.cpf,cns=r.cns,nome=r.nome,aih=r.aih,
+                                procedimento=r.procedimento) if i in selecionados else None
+                for i,r in enumerate(self.sessao.registros)]
 
     def _pausar(self):
         if not self.processando:return
@@ -1086,11 +1232,9 @@ class Aplicativo:
         else:
             self.pausa.set();self.btn_pausa.configure(text='Retomar')
     def _interromper(self):
-        # Interrompe o processo e encerra o navegador, evitando pesquisas sem supervisão.
-        self.parar.set();self.pausa.clear();self.aguardar_humano.confirmar()
         self._evento_seguro('INTERRUPCAO','geral')
         self.estatisticas.diagnosticar('INTERRUPCAO','INTERRUPCAO',categoria='INTERRUPCAO_SOLICITADA')
-        self.status.set('Solicitada interrupção; os resultados recebidos serão salvos.')
+        self.encerrar()
 
     def _salvar_checkpoint(self):
         try:
@@ -1218,8 +1362,12 @@ class Aplicativo:
                     self._evento_seguro('SESSAO_RECUPERADA','geral')
                     self.estatisticas.diagnosticar('SESSAO_RECUPERADA','OK')
                     self.status.set('Sessão confirmada. Retomando apenas as consultas pendentes...')
-                    if dado=='hospital':
-                        self.root.after(250,self._iniciar_hospital)
+                    origem,pendentes=dado if isinstance(dado,tuple) else (dado,None)
+                    if origem=='hospital':
+                        if pendentes is not None:
+                            self.root.after(250,lambda itens=pendentes:self._iniciar_hospital(itens))
+                        else:
+                            self.root.after(250,self._iniciar_hospital)
                     else:
                         self.root.after(250,self._iniciar_lote)
                 elif evento=='login_enviado':
@@ -1245,10 +1393,15 @@ class Aplicativo:
                     reg=self.sessao.registros[idx]
                     self.sessao.registrar_hospital(reg,resultado,duracao)
                     if reg.situacao=='DADOS_COLETADOS_SEM_DIVERGENCIA': self.acertos_hospital+=1
+                    self.consultas_hospital_execucao+=1
+                    if reg.situacao=='DADOS_COLETADOS_SEM_DIVERGENCIA': self.acertos_hospital_execucao+=1
+                    if resultado.situacao=='FALHA_NAVEGACAO': self.erros_hospital_execucao+=1
                     self._evento_seguro('HOSPITAL_OK' if reg.situacao == 'DADOS_COLETADOS_SEM_DIVERGENCIA' else 'HOSPITAL_PENDENCIA', 'hospital', contador)
                     if resultado.situacao=='FALHA_NAVEGACAO':
                         self._evento_seguro('ERRO_TECNICO','hospital',contador)
-                    if contador%15==0: self._salvar_checkpoint()
+                    if contador%15==0:
+                        self._salvar_checkpoint()
+                        self._resumir_historico()
                     self._atualizar_linha_visual(idx,self._linha_visual(reg))
                     self._atualizar_linha_visual(idx,self._linha_visual(reg,com_cns=True),True)
                     self._atualizar_linha_hospital(idx)
@@ -1392,8 +1545,17 @@ class Aplicativo:
                         self.processando=False;self.btn_lote.configure(state='normal')
                         self.btn_hospital.configure(state='normal')
                         self._resumir_historico()
-        except queue.Empty:pass
-        self.root.after(140,self._ler_eventos)
+        except queue.Empty:
+            pass
+        except Exception:
+            self.navegacao_falhou=True
+            self.parar.set()
+            self.status.set('Falha ao atualizar a interface. Consultas interrompidas; verifique os dados salvos.')
+        finally:
+            try:
+                self.root.after(140,self._ler_eventos)
+            except tk.TclError:
+                pass
 
     def _evento_seguro(self, evento, etapa='geral', indice=None):
         try:
@@ -1405,15 +1567,14 @@ class Aplicativo:
     def _resumir_historico(self):
         if not self.historico:return
         regs=self.sessao.registros
-        positivos=sum(r.situacao in ('SOLICITACAO_HOSPITALAR_CONFERIDA','DADOS_COLETADOS_SEM_DIVERGENCIA') for r in regs)
         cns=sum(r.situacao=='CNS_CONFIRMADO_SISREG' or bool(r.cns) for r in regs)
-        consultas=sum(bool(r.consulta_hospitalar) for r in regs)
-        pendencias=sum(bool(r.situacao) and (r.situacao.startswith('PENDENTE_') or 'AUSENTE' in r.situacao or
-                         'DIVERGENTE' in r.situacao or 'CONFLITO' in r.situacao) for r in regs)
+        consultas=getattr(self,'consultas_hospital_execucao',0)
+        positivos=getattr(self,'acertos_hospital_execucao',0)
+        pendencias=max(0,consultas-positivos)
         try:
             self.historico.atualizar(cns_identificados=cns,consultas_hospitalares=consultas,
                 sem_divergencia_identificada=positivos,pendencias=pendencias,
-                erros_tecnicos=self.dados_atuais.get('falhas',0)+self.falhas_hospital)
+                erros_tecnicos=self.dados_atuais.get('falhas',0)+getattr(self,'erros_hospital_execucao',0))
         except (OSError,ValueError):pass
 
     def _registrar_falha_preparacao(self, segundos: float) -> None:
@@ -1556,6 +1717,9 @@ class Aplicativo:
                 return
             self._salvar_e_encerrar_confirmado()
             return
+        if getattr(self, '_encerramento_em_curso', False):
+            self.status.set('Encerramento em andamento; aguarde o salvamento dos resultados.')
+            return
         self.parar.set();self.pausa.clear();self.aguardar_humano.confirmar()
         self.login_pendente=False;self.usuario.set('');self.senha.set('')
         # Caso o processo esteja ativo, a janela aguarda a gravação de resultados recebidos.
@@ -1565,12 +1729,13 @@ class Aplicativo:
                   'Há resultados ainda não gravados na planilha. Deseja sair e descartá-los?'):
                 return
         if self.processando or (self.thread_navegador and self.thread_navegador.is_alive()):
+            self._encerramento_em_curso=True
             self.status.set('Encerrando a sessão SISREG e concluindo eventuais salvamentos...')
             self._fechamento_lento=False
             self._prazo_fechamento = time.monotonic() + 15
             self.root.after(250,self._aguardar_encerramento)
         else:
-            self._fechar_aplicacao()
+            self._salvar_e_encerrar_confirmado()
 
     def _encerrar_confirmado_sem_relatorio(self):
         """Saida solicitada e confirmada APOS tentativa de salvar checkpoint.
@@ -1584,7 +1749,21 @@ class Aplicativo:
         self.aguardar_humano.confirmar()
         self.navegacao_falhou=True
         self.processando=False
+        processo=getattr(self,'thread_navegador',None)
+        if processo and processo.is_alive():
+            # Somente o processo que esta instância criou; nunca todos os Chromes.
+            if sys.platform=='win32' and getattr(processo,'pid',None):
+                try:
+                    self._processo_encerramento=subprocess.Popen(['taskkill','/PID',str(processo.pid),'/T','/F'],
+                        stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,
+                        creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+                except OSError:
+                    processo.terminate()
+            else:
+                processo.terminate()
         try:
+            if hasattr(self,'sessao') and hasattr(self,'dados_atuais'):
+                self._resumir_historico()
             if self.historico and not self.historico.termino:
                 self.historico.encerrar('INTERROMPIDA')
         except (OSError, ValueError):
@@ -1599,6 +1778,7 @@ class Aplicativo:
             self._encerrar_confirmado_sem_relatorio()
             return
         self._salvando_ao_sair = True
+        self.status.set('Salvando resultados antes de encerrar...')
         self.parar.set()
         self.pausa.clear()
         self.aguardar_humano.confirmar()
@@ -1653,8 +1833,9 @@ class Aplicativo:
             return
         ativo = self.processando or bool(self.thread_navegador and self.thread_navegador.is_alive())
         if not ativo:
+            self._encerramento_em_curso=False
             self._fechamento_lento=False
-            self._fechar_aplicacao()
+            self._salvar_e_encerrar_confirmado()
             return
         if time.monotonic() >= self._prazo_fechamento and not getattr(self, '_fechamento_lento', False):
             self._fechamento_lento=True
@@ -1663,10 +1844,23 @@ class Aplicativo:
         self.root.after(500,self._aguardar_encerramento)
 
 
+def _smoke_processo(fila):
+    fila.put('OK')
+
+
 def main():
     # Teste real do executável empacotado sem iniciar consultas SISREG.
     # Só ativado pela opção explícita usada no GitHub Actions.
     if sys.argv[1:] == ['--smoke-test']:
+        contexto=multiprocessing.get_context('spawn')
+        fila=contexto.Queue()
+        processo=contexto.Process(target=_smoke_processo,args=(fila,))
+        processo.start();processo.join(20)
+        if processo.is_alive():
+            processo.terminate();processo.join(5)
+            raise RuntimeError('Processo isolado não iniciou.')
+        if processo.exitcode != 0 or fila.get(timeout=5) != 'OK':
+            raise RuntimeError('Comunicação com processo isolado falhou.')
         Path('rpa_sisreg_smoke.ok').write_text(APP_VERSION + ':OK', encoding='utf-8')
         return
     root=tk.Tk()
@@ -1675,4 +1869,5 @@ def main():
 
 
 if __name__ == '__main__':
+    multiprocessing.freeze_support()
     main()

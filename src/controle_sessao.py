@@ -48,9 +48,16 @@ def desafio_visivel(contexto) -> bool:
                 continue
             if not pagina.url.lower().startswith('https://sisregiii.saude.gov.br/'):
                 continue
-            texto = pagina.locator('body').inner_text(timeout=1200)
-            if texto_exige_verificacao(texto):
-                return True
+            for quadro in getattr(pagina, 'frames', [pagina]):
+                try:
+                    endereco = getattr(quadro, 'url', '')
+                    if endereco and not endereco.lower().startswith('https://sisregiii.saude.gov.br/'):
+                        continue
+                    texto = quadro.locator('body').inner_text(timeout=1200)
+                    if texto_exige_verificacao(texto):
+                        return True
+                except Exception:
+                    continue
         except Exception:
             continue
     return False
@@ -59,8 +66,8 @@ def desafio_visivel(contexto) -> bool:
 class AguardarHumano:
     """Um sinal de confirmação, sem temporizador de encerramento da janela."""
 
-    def __init__(self):
-        self.confirmacao = Event()
+    def __init__(self, confirmacao=None):
+        self.confirmacao = confirmacao if confirmacao is not None else Event()
 
     def confirmar(self) -> None:
         self.confirmacao.set()

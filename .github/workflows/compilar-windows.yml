@@ -20,6 +20,7 @@ jobs:
     timeout-minutes: 25
     env:
       PYTHONUTF8: "1"
+      SISREG_GUI_TEST: "1"
     steps:
       - name: Baixar codigo
         uses: actions/checkout@v4
