@@ -223,6 +223,7 @@ class TesteFiltrosInterface(unittest.TestCase):
             app.filtro_hospital.set('AIHs não encontradas');app._aplicar_filtro_hospital()
             self.assertEqual(app.tabela_hospital.get_children(),('0',))
             app.tabela_hospital.selection_set('0');app._iniciar_hospital=Mock()
+            app.thread_navegador=SimpleNamespace(is_alive=lambda:True);app.browser_ready=True
             app._repetir_hospital_selecionados()
             app._iniciar_hospital.assert_called_once_with([0])
             app.filtro_hospital.set('Todos');app._aplicar_filtro_hospital()

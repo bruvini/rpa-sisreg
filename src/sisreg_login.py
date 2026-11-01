@@ -209,6 +209,8 @@ class Aplicativo:
         self.consultas_hospital_execucao = 0
         self.acertos_hospital_execucao = 0
         self.erros_hospital_execucao = 0
+        self._hospital_apos_login = None
+        self._indices_concluidos_reconsulta = set()
         self.consultas_cadastro = 0
         self.relatorio_finalizado = False
         self.ultima_fonte = None
@@ -422,9 +424,9 @@ class Aplicativo:
         ttk.Button(hf,text='Interromper',command=self._interromper).pack(side='left')
         ferramentas=ttk.Frame(c);ferramentas.pack(fill='x',pady=(10,0))
         ttk.Label(ferramentas,text='Mostrar:').pack(side='left',padx=(0,6))
-        self.filtro_hospital=tk.StringVar(value='Todos')
+        self.filtro_hospital=tk.StringVar(value='Por pesquisar')
         filtro=ttk.Combobox(ferramentas,textvariable=self.filtro_hospital,state='readonly',width=25,
-                           values=('Todos','Falhas técnicas','AIHs não encontradas'))
+                           values=('Por pesquisar','Falhas técnicas','AIHs não encontradas','Divergências','Todos'))
         filtro.pack(side='left',padx=(0,10))
         filtro.bind('<<ComboboxSelected>>',lambda _e:self._aplicar_filtro_hospital())
         ttk.Button(ferramentas,text='Pesquisar selecionados novamente',
@@ -564,12 +566,20 @@ class Aplicativo:
             if consulta in ('FALHA_NAVEGACAO','FICHA_NAO_ABERTA','AIH_NAO_COMPROVADA_FICHA',
                             'CAMPOS_FICHA_INCOMPLETOS','CAMPOS_FICHA_NAO_CONFIRMADOS'):
                 return 'Falhas técnicas'
+            if consulta=='PROCEDIMENTO_DIVERGENTE' or 'DIVERGENTE' in atual or 'CONFLITANTE' in atual:
+                return 'Divergências'
             return 'Outros'
         if 'AIH_NAO_LOCALIZADA' in atual or anterior.startswith('AIH não encontrada após pesquisar'):
             return 'AIHs não encontradas'
         if (any(x in atual for x in ('FALHA_NAVEGACAO','FICHA_NAO_ABERTA','CAMPOS_FICHA_','AIH_NAO_COMPROVADA'))
-                or anterior.startswith(('Falha ou dados incompletos','Ficha da AIH não aberta'))):
+                or anterior.startswith(('Falha ou dados incompletos','Ficha da AIH não aberta',
+                                        'AIH não confirmada na consulta','Consulta não concluída'))):
             return 'Falhas técnicas'
+        if 'DIVERGENTE' in atual or 'CONFLITANTE' in atual or anterior in (
+                'Procedimento divergente — revisão fiscal','Dados divergentes na consulta SISREG'):
+            return 'Divergências'
+        if candidato_hospitalar(r):
+            return 'Por pesquisar'
         return 'Outros'
 
     def _aplicar_filtro_hospital(self):
@@ -578,11 +588,19 @@ class Aplicativo:
             self._atualizar_linha_hospital(i)
 
     def _repetir_hospital_selecionados(self):
+        visiveis=set(self.tabela_hospital.get_children())
         indices=[int(i) for i in self.tabela_hospital.selection()
-                 if self._grupo_hospital(self.sessao.registros[int(i)]) in
-                    ('Falhas técnicas','AIHs não encontradas')]
+                 if i in visiveis and cns_formato(self.sessao.registros[int(i)].cns)
+                 and self.sessao.registros[int(i)].aih and self.sessao.registros[int(i)].nome
+                 and self._grupo_hospital(self.sessao.registros[int(i)]) in
+                     ('Por pesquisar','Falhas técnicas','AIHs não encontradas','Divergências')]
         if not indices:
-            self.status.set('Selecione uma ou mais falhas técnicas ou AIHs não encontradas na tabela.')
+            self.status.set('Selecione uma ou mais consultas por pesquisar ou pendências na tabela.')
+            return
+        if not self.thread_navegador or not self.thread_navegador.is_alive() or not self.browser_ready:
+            self._hospital_apos_login=indices
+            self.abas.select(1)
+            self.status.set('Para pesquisar os registros selecionados, entre novamente no SISREG na etapa 2. As etapas concluídas serão preservadas.')
             return
         self._iniciar_hospital(indices)
 
@@ -594,7 +612,11 @@ class Aplicativo:
         else:
             self.tabela_hospital.insert('', 'end', iid=iid,values=dados)
         filtro=self.filtro_hospital.get() if hasattr(self,'filtro_hospital') else 'Todos'
-        if filtro!='Todos' and self._grupo_hospital(self.sessao.registros[indice])!=filtro:
+        grupo=self._grupo_hospital(self.sessao.registros[indice])
+        r=self.sessao.registros[indice]
+        recuperavel=(grupo=='Falhas técnicas' and cns_formato(r.cns) and bool(r.aih and r.nome))
+        mostrar=(filtro=='Todos' or grupo==filtro or (filtro=='Por pesquisar' and recuperavel))
+        if not mostrar:
             self.tabela_hospital.detach(iid)
             self._ocultas_hospital.add(iid)
         elif iid in self._ocultas_hospital:
@@ -639,6 +661,7 @@ class Aplicativo:
         if self.carregando or self.processando:return
         if not self.arquivo_planilha:
             self.status.set('Selecione o XLSX hospitalar.');return
+        self.filtro_hospital.set('Por pesquisar')
         self.preparo_concluido=False;self.cadastro_concluido=False
         self.abas.tab(1,state='disabled');self.abas.tab(2,state='disabled');self.abas.tab(3,state='disabled')
         self.estatisticas=Estatisticas()
@@ -854,7 +877,9 @@ class Aplicativo:
         self._ocultar_verificacao()
         canal='chrome' if self.navegador.get()=='Google Chrome' else 'msedge'
         self.usuario.set('');self.senha.set('');self.parar.clear()
-        self.browser_ready=False;self.cadastro_concluido=False
+        self.browser_ready=False
+        if getattr(self,'_hospital_apos_login',None) is None:
+            self.cadastro_concluido=False
         self.thread_navegador=self.contexto_processos.Process(
             target=_executar_navegador_isolado,
             args=(self.eventos,self.comandos,self.parar,self.pausa,self.reiniciar_navegador,
@@ -862,7 +887,7 @@ class Aplicativo:
         self.thread_navegador.start();self.status.set('Abrindo nova sessão SISREG...')
 
     def _retomar_login_pendente(self):
-        if self.parar.is_set() or not self.preparo_concluido:
+        if not self.login_pendente or not self.preparo_concluido:
             return
         if self.thread_navegador and self.thread_navegador.is_alive():
             self.root.after(250, self._retomar_login_pendente)
@@ -1192,24 +1217,35 @@ class Aplicativo:
     def _iniciar_hospital(self, selecionados=None):
         if self.processando:
             self.status.set('Outro lote em execução; aguarde sua conclusão.');return
-        if not self.preparo_concluido or not self.cadastro_concluido or not self.thread_navegador or not self.thread_navegador.is_alive() or not self.browser_ready:
+        if not self.preparo_concluido or not self.cadastro_concluido:
             self.status.set('Aguarde o fim das etapas 1 e 2 antes da consulta hospitalar.');return
+        if not self.thread_navegador or not self.thread_navegador.is_alive() or not self.browser_ready:
+            self._hospital_apos_login=(list(selecionados) if selecionados is not None else
+                [i for i,r in enumerate(self.sessao.registros) if candidato_hospitalar(r)])
+            self.abas.select(1)
+            self.status.set('Entre novamente no SISREG na etapa 2 para pesquisar. As etapas anteriores serão preservadas.')
+            return
         candidatos=([i for i,r in enumerate(self.sessao.registros) if candidato_hospitalar(r)]
                     if selecionados is None else list(dict.fromkeys(selecionados)))
         self.hospital_universo=len(self.sessao.registros)
-        self.hospital_aproveitados=sum(ficha_hospitalar_completa(r) for r in self.sessao.registros)
+        selecionados_set=set(candidatos)
+        self.hospital_aproveitados=sum(ficha_hospitalar_completa(r) for i,r in enumerate(self.sessao.registros) if i not in selecionados_set)
+        self._indices_concluidos_reconsulta={i for i in candidatos if ficha_hospitalar_completa(self.sessao.registros[i]) or
+            self.sessao.registros[i].consulta_hospitalar in ('FICHA_CONFERIDA','PROCEDIMENTO_DIVERGENTE')}
         self.hospital_previstos=len(candidatos)
         if not candidatos:
             self.status.set('Sem solicitações hospitalares elegíveis para pesquisa. Resultado registrado sem consultas adicionais.')
             self.estatisticas.registrar_total('hospital',0)
             self.estatisticas.concluir('hospital',0.0,consultados=0,encontrados=0)
-            self._finalizar_relatorio()
+            self._finalizar_relatorio_seguro()
             return
+        if getattr(self,'relatorio_finalizado',False):
+            self._iniciar_execucao_reconsulta()
         self.inicio_hospital=time.perf_counter()
         self.tentativas_hospital=0;self.acertos_hospital=0;self.falhas_hospital=0
         self.estatisticas.registrar_total('hospital',len(candidatos))
-        self.resumo_hospital.set('Solicitações hospitalares · '+
-            resumo_progresso(self.hospital_universo,self.hospital_aproveitados,len(candidatos),0).resumo())
+        self.resumo_hospital.set(f'Nesta execução: {self.consultas_hospital_execucao} consultas · '
+            f'Último lote: 0/{len(candidatos)} · já aproveitados: {self.hospital_aproveitados}')
         self.tempo_hospital.set(f'Iniciando · manual projetado: {self._duracao(len(candidatos)*10)} (10s/consulta).')
         for i in candidatos: self._atualizar_linha_hospital(i)
         self.tipo_lote='hospital';self.processando=True
@@ -1224,6 +1260,25 @@ class Aplicativo:
         return [SimpleNamespace(cpf=r.cpf,cns=r.cns,nome=r.nome,aih=r.aih,
                                 procedimento=r.procedimento) if i in selecionados else None
                 for i,r in enumerate(self.sessao.registros)]
+
+    def _iniciar_execucao_reconsulta(self):
+        """Uma reconsulta após o relatório tem histórico próprio, sem apagar o anterior."""
+        self.relatorio_finalizado=False
+        self.inicio_ciclo=time.perf_counter()
+        self.consultas_hospital_execucao=0
+        self.acertos_hospital_execucao=0
+        self.erros_hospital_execucao=0
+        self.estatisticas=Estatisticas()
+        self.estatisticas.concluir('preparo',0,consultados=0,encontrados=0)
+        self.estatisticas.concluir('cadastro',0,consultados=0,encontrados=0)
+        try:
+            _,logs=pastas_de_saida()
+            self.historico=HistoricoExecucao(pasta=logs)
+            self.historico.fonte(self.sessao.origem,sha=self.sessao.hash_planilha,tipo='xlsx')
+            self.historico.atualizar(registros=len(self.sessao.registros),preparados=len(self.sessao.registros))
+        except OSError:
+            self.historico=None
+            self.status.set('Histórico local indisponível. Verifique a pasta Logs.')
 
     def _pausar(self):
         if not self.processando:return
@@ -1378,8 +1433,14 @@ class Aplicativo:
                     self.estatisticas.diagnosticar('MENU_AUTENTICADO','OK')
                     self.estatisticas.diagnosticar('SESSAO_HTTPS_OFICIAL','OK')
                     self.browser_ready=True
-                    self.status.set('Acesso identificado. Retomando consultas elegíveis, preservando CNS já encontrados...')
-                    self._iniciar_lote()
+                    pendentes=getattr(self,'_hospital_apos_login',None)
+                    self._hospital_apos_login=None
+                    if pendentes is not None:
+                        self.status.set('Acesso identificado. Retomando as solicitações selecionadas...')
+                        self._iniciar_hospital(pendentes)
+                    else:
+                        self.status.set('Acesso identificado. Retomando consultas elegíveis, preservando CNS já encontrados...')
+                        self._iniciar_lote()
                 elif evento=='hospital_iniciado':
                     self.progresso_hospital.set(f'Iniciando {dado} consultas hospitalares...')
                 elif evento=='hospital_consultando':
@@ -1391,12 +1452,16 @@ class Aplicativo:
                     self.tentativas_hospital += 1
                     if resultado.situacao=='FALHA_NAVEGACAO': self.falhas_hospital+=1
                     reg=self.sessao.registros[idx]
-                    self.sessao.registrar_hospital(reg,resultado,duracao)
-                    if reg.situacao=='DADOS_COLETADOS_SEM_DIVERGENCIA': self.acertos_hospital+=1
+                    preservar=(idx in getattr(self,'_indices_concluidos_reconsulta',set()) and
+                               resultado.situacao not in ('FICHA_CONFERIDA','PROCEDIMENTO_DIVERGENTE'))
+                    if not preservar:
+                        self.sessao.registrar_hospital(reg,resultado,duracao)
+                    sem_divergencia=(not preservar and reg.situacao=='DADOS_COLETADOS_SEM_DIVERGENCIA')
+                    if sem_divergencia: self.acertos_hospital+=1
                     self.consultas_hospital_execucao+=1
-                    if reg.situacao=='DADOS_COLETADOS_SEM_DIVERGENCIA': self.acertos_hospital_execucao+=1
+                    if sem_divergencia: self.acertos_hospital_execucao+=1
                     if resultado.situacao=='FALHA_NAVEGACAO': self.erros_hospital_execucao+=1
-                    self._evento_seguro('HOSPITAL_OK' if reg.situacao == 'DADOS_COLETADOS_SEM_DIVERGENCIA' else 'HOSPITAL_PENDENCIA', 'hospital', contador)
+                    self._evento_seguro('HOSPITAL_OK' if sem_divergencia else 'HOSPITAL_PENDENCIA', 'hospital', contador)
                     if resultado.situacao=='FALHA_NAVEGACAO':
                         self._evento_seguro('ERRO_TECNICO','hospital',contador)
                     if contador%15==0:
@@ -1405,18 +1470,17 @@ class Aplicativo:
                     self._atualizar_linha_visual(idx,self._linha_visual(reg))
                     self._atualizar_linha_visual(idx,self._linha_visual(reg,com_cns=True),True)
                     self._atualizar_linha_hospital(idx)
-                    fichas_completas=sum(r.consulta_hospitalar in ('FICHA_CONFERIDA','PROCEDIMENTO_DIVERGENTE')
-                        for r in self.sessao.registros) - self.hospital_aproveitados
-                    fichas_completas=max(0,min(self.hospital_previstos,fichas_completas))
-                    self.resumo_hospital.set('Solicitações hospitalares · '+
-                        resumo_progresso(self.hospital_universo,self.hospital_aproveitados,
-                            self.hospital_previstos,fichas_completas).resumo()+
-                        f' · sem divergência na sessão: {self.acertos_hospital}; pendências: {self.tentativas_hospital-self.acertos_hospital}')
+                    self.resumo_hospital.set(f'Nesta execução: {self.consultas_hospital_execucao} consultas · '
+                        f'sem divergência: {self.acertos_hospital_execucao} · '
+                        f'pendências: {self.consultas_hospital_execucao-self.acertos_hospital_execucao} · '
+                        f'último lote: {self.tentativas_hospital}/{self.hospital_previstos}')
                     self.tempo_hospital.set(
                         f'Tempo decorrido: {self._duracao(time.perf_counter()-self.inicio_hospital)} · Manual hipotético: {self._duracao(total*10)} (10s/AIH).')
                     self.barra_hospital.configure(value=100*contador/max(1,total))
                     self.progresso_hospital.set(f'{contador}/{total} consultadas · última: {rotulo_situacao(reg.situacao)} · '
                                                f'{self._duracao(duracao)} nesta AIH')
+                    if preservar:
+                        self.status.set('A nova consulta não foi concluída; o resultado anterior foi preservado.')
                 elif evento=='hospital_pausa_tecnica':
                     self.status.set(str(dado))
                     self.estatisticas.diagnosticar('HOSPITAL_PAUSA_TECNICA','PENDENCIA',
@@ -1456,7 +1520,7 @@ class Aplicativo:
                     else:
                         self.status.set('Etapa 3: coleta automatizada encerrada. A análise fiscal das exceções permanece pendente.')
                     if not self.persistencia_falhou:
-                        self._finalizar_relatorio()
+                        self._finalizar_relatorio_seguro()
                 elif evento=='hospital_alerta':
                     self.navegacao_falhou=True
                     self.status.set(str(dado))
@@ -1535,8 +1599,7 @@ class Aplicativo:
                     if self.navegacao_falhou and self.preparo_concluido:
                         self.status.set('Sessão interrompida. Informe novamente seu login para retomar somente os CNS pendentes. A planilha foi preservada.')
                     self.browser_ready=False
-                    if self.login_pendente and not self.parar.is_set():
-                        self.login_pendente=False
+                    if self.login_pendente:
                         # Eventos são entregues antes de finalizar a thread: aguardar
                         # o término efetivo, sem bloquear o loop Tk.
                         self.root.after(250, self._retomar_login_pendente)
@@ -1603,6 +1666,21 @@ class Aplicativo:
         self.relatorio_finalizado=True
         self.status.set(self.status.get()+f' Diagnóstico: {destino.name}')
 
+    def _finalizar_relatorio_seguro(self):
+        """A falha de resumo não muda a situação da sessão nem bloqueia resultados."""
+        try:
+            self._finalizar_relatorio()
+            if self.relatorio_finalizado:
+                return
+        except Exception:
+            pass
+        self.resultado_geral.set('A coleta foi concluída, mas o resumo não pôde ser exibido. Consulte a planilha salva e a pasta Logs.')
+        self.resultado_tempos.set('Resumo de tempos indisponível nesta execução.')
+        self.relatorio_finalizado=True
+        self.abas.tab(3,state='normal')
+        self._atualizar_avanco()
+        self.status.set('Coleta concluída. Não foi possível montar o resumo; consulte a planilha e a pasta Logs.')
+
     def _finalizar_relatorio(self):
         if self.relatorio_finalizado or not self.sessao.origem:
             return
@@ -1638,21 +1716,21 @@ class Aplicativo:
         e2=etapas['cadastro'];e3=etapas['hospital']
         identificados,elegiveis=self._cns_totais()
         cpf_total=sum(bool(r.cpf) for r in self.sessao.registros)
-        fichas_acumuladas=sum(r.consulta_hospitalar in ('FICHA_CONFERIDA','PROCEDIMENTO_DIVERGENTE')
-                              and r.carater and r.autorizador for r in self.sessao.registros)
-        sem_divergencia=sum(r.situacao=='DADOS_COLETADOS_SEM_DIVERGENCIA'
-                           for r in self.sessao.registros)
+        fichas_acumuladas=sum(bool((r.consulta_hospitalar in ('FICHA_CONFERIDA','PROCEDIMENTO_DIVERGENTE')
+                              and r.carater and r.autorizador) or ficha_hospitalar_completa(r))
+                              for r in self.sessao.registros)
+        sem_divergencia=self.acertos_hospital_execucao
         self.resultado_geral.set(f'{n} registros hospitalares · {cpf_total} CPFs disponíveis ({percentual(cpf_total,n)})\n'
             f'{identificados}/{elegiveis} CNS acumulados ({percentual(identificados,elegiveis)}) · '
             f'{fichas_acumuladas}/{n} fichas com dados coletados ({percentual(fichas_acumuladas,n)})\n'
-            f'Sem diferenças nos campos consultados: {sem_divergencia} · '
-            f'consultas hospitalares nesta execução: {e3.consultados}/{e3.total} · '
-            f'erros técnicos: {sum(e.falhas_tecnicas for e in etapas.values())}.')
-        manual=self.estatisticas.total_manual()
+            f'Consultas hospitalares nesta execução: {self.consultas_hospital_execucao} · '
+            f'sem divergência: {sem_divergencia} · pendências: {self.consultas_hospital_execucao-sem_divergencia}\n'
+            f'Último lote: {e3.consultados}/{e3.total} · erros técnicos na execução: {self.erros_hospital_execucao}.')
+        manual=self.estatisticas.total_manual(consultas_hospital=self.consultas_hospital_execucao)
         dif=manual-segundos
         self.resultado_tempos.set(
             f'Tempo total decorrido (inclui esperas): {self._duracao(segundos)}\n'
-            f'Etapa 1: {self._duracao(etapas["preparo"].segundos)} · Etapa 2: {self._duracao(e2.segundos)} · Etapa 3: {self._duracao(e3.segundos)}\n'
+            f'Etapa 1: {self._duracao(etapas["preparo"].segundos)} · Etapa 2: {self._duracao(e2.segundos)} · Último lote hospitalar: {self._duracao(e3.segundos)}\n'
             f'Tempo manual hipotético: {self._duracao(manual)} (15s por AIH + 10s por consulta de CNS + 10s por consulta hospitalar).\n'
             f'Diferença hipotética: {"+" if dif>=0 else "−"}{self._duracao(abs(dif))}. Não demonstra economia comprovada.')
         self.relatorio_finalizado=True

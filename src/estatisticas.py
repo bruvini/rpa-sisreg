@@ -126,8 +126,10 @@ class Estatisticas:
         self.total_segundos=max(0.0,segundos)
         self.situacao=situacao
 
-    def total_manual(self):
-        return sum((e.total if k=='preparo' else e.consultados)*MANUAL_SEGUNDOS[k] for k,e in self.etapas.items())
+    def total_manual(self, consultas_hospital=None):
+        return sum((e.total if k=='preparo' else
+                    consultas_hospital if k=='hospital' and consultas_hospital is not None else e.consultados)
+                   * MANUAL_SEGUNDOS[k] for k,e in self.etapas.items())
 
     def comparativo(self, chave):
         e=self.etapas[chave]
@@ -167,6 +169,8 @@ def relatorio_tecnico(estat: Estatisticas, historico, destino: Path) -> Path:
                     continue
     inicio=estat.inicio.strftime('%d/%m/%Y %H:%M:%S')
     fim=estat.termino.strftime('%d/%m/%Y %H:%M:%S') if estat.termino else 'Não finalizada'
+    contagens=getattr(historico,'contagens',None)
+    consultas_hospital=contagens.get('consultas_hospitalares') if isinstance(contagens,dict) else None
     linhas=['RPA SISREG — RELATÓRIO TÉCNICO DE EXECUÇÃO', '='*51,
             'Documento administrativo, sem dados identificáveis dos pacientes.',
             'A coleta automatizada não constitui decisão ou atesto fiscal.', '',
@@ -175,7 +179,7 @@ def relatorio_tecnico(estat: Estatisticas, historico, destino: Path) -> Path:
             f'Execução: {historico.id if historico else "Não disponível"}',
             f'Início: {inicio}',f'Término: {fim}',f'Situação: {estat.situacao}',
             f'Tempo total decorrido (inclui intervalos entre etapas): {duracao(estat.total_segundos)}',
-            f'Tempo manual hipotético acumulado: {duracao(estat.total_manual())}',
+            f'Tempo manual hipotético acumulado: {duracao(estat.total_manual(consultas_hospital=consultas_hospital))}',
             'Premissas hipotéticas: CPF 15s/registro; CNS 10s/consulta; internação 10s/consulta.',
             'Não constitui medição de produtividade manual ou economia comprovada.','',
             'FONTES (somente hashes SHA-256)']
@@ -191,6 +195,15 @@ def relatorio_tecnico(estat: Estatisticas, historico, destino: Path) -> Path:
             f'  Universo elegível: {e.total}; tentados: {e.consultados}; encontrados: {e.encontrados}; pendências: {e.pendencias}; erros técnicos: {e.falhas_tecnicas}',
             f'  Completude: {percentual(e.encontrados,e.total)}; tempo medido: {duracao(e.segundos)}',
             f'  Manual hipotético: {duracao((e.total if chave=="preparo" else e.consultados)*MANUAL_SEGUNDOS[chave])} ({MANUAL_SEGUNDOS[chave]}s por registro efetivamente tratado)'])
+        if chave=='hospital':
+            linhas.append('  Os indicadores acima referem-se ao último lote hospitalar.')
+            contagens=getattr(historico,'contagens',None)
+            if isinstance(contagens,dict):
+                linhas.append('  Acumulado na execução: '
+                    f"consultas: {contagens.get('consultas_hospitalares',0)}; "
+                    f"sem divergência: {contagens.get('sem_divergencia_identificada',0)}; "
+                    f"pendências: {contagens.get('pendencias',0)}; "
+                    f"erros técnicos: {contagens.get('erros_tecnicos',0)}")
         for fase, segundos in e.fases.items():
             # Fases são nomes controlados, e jamais mensagens de exceção.
             if fase in ('planilha','indexacao_pdf','cruzamento','gravacao'):
