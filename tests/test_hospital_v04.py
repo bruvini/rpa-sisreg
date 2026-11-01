@@ -121,7 +121,9 @@ class TestesSelecaoExataAIH(unittest.TestCase):
     def test_abre_aih_exata_ao_clicar_na_linha(self):
         a=_Linha(['11.05.2026','PACIENTE 1','PROC','CLINICA','Eletiva','000000000000-1','APROVADA'])
         b=_Linha(['11.05.2026','PACIENTE 2','PROC','CLINICA','Eletiva','900000000012-3','APROVADA'])
-        selecionar_linha_aih(_Pagina([a,b]),'9000000000123',espera_ms=100)
+        from unittest.mock import patch
+        with patch('sisreg_hospital._metadados_resultados',return_value=(2,2,None,None)):
+            selecionar_linha_aih(_Pagina([a,b]),'9000000000123',espera_ms=100)
         self.assertEqual(a.cliques,0)
         self.assertEqual(b.cliques,1)
 
@@ -129,8 +131,10 @@ class TestesSelecaoExataAIH(unittest.TestCase):
         a=_Linha(['11.05.2026','PACIENTE 1','PROC','CLINICA','Eletiva','900000000012-3','APROVADA'])
         b=_Linha(['11.05.2026','PACIENTE 2','PROC','CLINICA','Eletiva','9000000000123','APROVADA'])
         from sisreg_navigation import NavegacaoInesperada
-        with self.assertRaises(NavegacaoInesperada):
-            selecionar_linha_aih(_Pagina([a,b]),'9000000000123',espera_ms=100)
+        from unittest.mock import patch
+        with patch('sisreg_hospital._metadados_resultados',return_value=(2,2,None,None)):
+            with self.assertRaises(NavegacaoInesperada):
+                selecionar_linha_aih(_Pagina([a,b]),'9000000000123',espera_ms=100)
         self.assertEqual(a.cliques,0)
         self.assertEqual(b.cliques,0)
 

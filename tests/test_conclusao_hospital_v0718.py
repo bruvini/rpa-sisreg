@@ -163,3 +163,34 @@ class TesteConclusao(unittest.TestCase):
         self.assertEqual(self.app.tabela_hospital.get_children(),('2',))
         self.app.filtro_hospital.set('Divergências');self.app._aplicar_filtro_hospital()
         self.assertEqual(self.app.tabela_hospital.get_children(),('3',))
+
+    def test_seleciona_apenas_todos_do_filtro_visivel(self):
+        def registro(n):
+            return Registro('PT6',n,'PACIENTE FICTICIO','9000000000123','0408050063',
+                            '11144477735','700000000000001','','')
+        a,b,c=[registro(i) for i in (2,3,4)]
+        a.consulta_hospitalar=b.consulta_hospitalar='PROCEDIMENTO_DIVERGENTE'
+        c.consulta_hospitalar='AIH_NAO_LOCALIZADA_PAGINAS'
+        self.app.sessao.registros=[a,b,c];self.app._atualizar_tabela()
+        self.app.filtro_hospital.set('Divergências');self.app._aplicar_filtro_hospital()
+        self.app._selecionar_filtro_hospital()
+        self.assertEqual(set(self.app.tabela_hospital.selection()),{'0','1'})
+        self.app.thread_navegador=SimpleNamespace(is_alive=lambda:True)
+        self.app.browser_ready=True;self.app._iniciar_hospital=Mock()
+        self.app._repetir_hospital_selecionados()
+        self.app._iniciar_hospital.assert_called_once_with([0,1])
+
+    def test_falha_antiga_atualiza_para_aih_nao_localizada(self):
+        from saida_xlsx import situacao_final
+        r=Registro('PT6',2,'PACIENTE FICTICIO','9000000000123','0408050063',
+                   '11144477735','700000000000001','','')
+        r.situacao_anterior='Falha ou dados incompletos — repetir consulta'
+        r.situacao='PENDENTE_FALHA_NAVEGACAO';r.consulta_hospitalar='FALHA_NAVEGACAO'
+        self.app.sessao.registros=[r];self.app._indices_concluidos_reconsulta=set()
+        self.app.hospital_previstos=1;self.app.inicio_hospital=time.perf_counter()
+        self.app.eventos=queue.Queue()
+        self.app.eventos.put(('hospital_item',(0,ResultadoHospital('AIH_NAO_LOCALIZADA_PAGINAS'),1.0,1,1)))
+        self.app._ler_eventos()
+        self.assertEqual(r.consulta_hospitalar,'AIH_NAO_LOCALIZADA_PAGINAS')
+        self.assertEqual(situacao_final(r),'AIH não encontrada após pesquisar todas as páginas — revisar')
+        self.assertEqual(self.app._grupo_hospital(r),'AIHs não encontradas')

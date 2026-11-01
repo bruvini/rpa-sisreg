@@ -1,10 +1,12 @@
 # RPA SISREG — Conferência automatizada de internações
 
-![Versão](https://img.shields.io/badge/vers%C3%A3o-0.7.18-07436b) ![Python](https://img.shields.io/badge/Python-3.12-3776AB) ![Licença](https://img.shields.io/badge/c%C3%B3digo-MIT-555555)
+![Versão](https://img.shields.io/badge/vers%C3%A3o-0.7.19-07436b) ![Python](https://img.shields.io/badge/Python-3.12-3776AB) ![Licença](https://img.shields.io/badge/c%C3%B3digo-MIT-555555)
 
 ### Retomada e revisão de pendências
 
 Se o SISREG exigir verificação, conclua-a no navegador e clique em **Verificar sessão e retomar**. O RPA continua pelos itens que ainda não foram concluídos. Na etapa 3, a tabela abre com consultas por pesquisar e falhas recuperáveis; use os filtros para ver AIHs não encontradas ou divergências, selecione as linhas desejadas e clique em **Pesquisar selecionados novamente**. A busca sem resultado requer revisão humana e não comprova inexistência da AIH.
+
+Para pesquisar vários registros, escolha o filtro e clique em **Selecionar todos do filtro**; depois clique em **Pesquisar selecionados novamente**. O botão seleciona apenas as linhas visíveis com dados válidos para consulta.
 
 Ao interromper ou encerrar, aguarde a gravação do checkpoint. Se o navegador ficar sem resposta, a saída confirmada pode interromper a consulta em andamento; resultados ainda não gravados devem ser conferidos na planilha de trabalho.
 
@@ -53,7 +55,7 @@ A planilha hospitalar de entrada e o PDF são **somente leitura**. A cópia enri
 é gerada automaticamente sem apagar o original. Na estação de trabalho, mantenha
 o Excel fechado enquanto o lote é processado.
 
-## Pesquisa hospitalar conforme HTML oficial (v0.7.18)
+## Pesquisa hospitalar conforme HTML oficial (v0.7.19)
 
 - Consulta Hosp > Solicitações: usa o link real de `/cgi-bin/cons_aih`.
 - Busca o CNS no formulário com `input[name="cns"][maxlength="15"]` e aciona o botão `PESQUISAR` na mesma janela interna.

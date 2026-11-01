@@ -3,6 +3,7 @@ import sys
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+from contextlib import contextmanager
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'src'))
 from sisreg_hospital import (selecionar_linha_aih, AIHNaoEncontrada,
     PAGINADOR_PROXIMO, LINHAS_RESULTADOS, consultar_solicitacao_hospitalar)
@@ -33,7 +34,7 @@ class Proxima:
     def is_visible(self):return True
     def is_enabled(self):return True
     def get_attribute(self,attr):
-        if attr=='onclick':return "exibirPagina(1,2); return false;"
+        if attr=='onclick':return f"exibirPagina({self.page.numero+1},{len(self.page.paginas)}); return false;"
         return None
     def click(self,**kw):
         if not self.page.parar_paginar:
@@ -44,17 +45,38 @@ class Lista:
     def count(self):return len(self.rows)
     def nth(self,i):return self.rows[i]
 
+class Titulo:
+    def __init__(self,page):self.page=page
+    def filter(self,**kw):return self
+    def count(self):return 1
+    def inner_text(self,**kw):return f'RESULTADOS DA PESQUISA ({sum(len(p) for p in self.page.paginas)})'
+
+class Indicador:
+    def __init__(self,page):self.page=page
+    def count(self):return 1 if len(self.page.paginas)>1 else 0
+    def input_value(self,**kw):return str(self.page.numero+1)
+    def locator(self,selector):return self
+    def inner_text(self,**kw):return f'Exibindo Página de {len(self.page.paginas)}'
+
 class Pagina:
     url='https://sisregiii.saude.gov.br/cgi-bin/index'
     def __init__(self,paginas,parar_paginar=False):
         self.frames=[self];self.paginas=paginas
         self.numero=0;self.parar_paginar=parar_paginar
     def locator(self,selector):
+        from sisreg_hospital import CABECALHO_RESULTADOS
         if selector==LINHAS_RESULTADOS:
             return Lista(self.paginas[self.numero])
+        if selector==CABECALHO_RESULTADOS:return Titulo(self)
+        if selector=='input[name="txtPagina"]':return Indicador(self)
         if selector==PAGINADOR_PROXIMO:
             return Lista([Proxima(self)] if self.numero<len(self.paginas)-1 else [])
         raise AssertionError(selector)
+    @contextmanager
+    def expect_navigation(self,**kw):
+        anterior=self.numero
+        yield
+        if self.numero==anterior:raise RuntimeError('Navegação não ocorreu')
 
 class TestesPaginacao(unittest.TestCase):
     def test_encontra_aihexata_na_segunda_pagina(self):
@@ -75,9 +97,8 @@ class TestesPaginacao(unittest.TestCase):
 
     def test_nao_avanca_mantem_pendencia_tecnica(self):
         p=Pagina([[Linha('9000000000001')],[Linha(ALVO)]],parar_paginar=True)
-        with patch('sisreg_hospital.time.monotonic',side_effect=[0,0,0,20]):
-            with self.assertRaises(NavegacaoInesperada):
-                selecionar_linha_aih(p,ALVO,espera_ms=500)
+        with self.assertRaises(NavegacaoInesperada):
+            selecionar_linha_aih(p,ALVO,espera_ms=500)
         self.assertEqual(p.numero,0)
 
     def test_aih_ja_na_primeira(self):
@@ -113,7 +134,7 @@ class TestesPaginacao(unittest.TestCase):
     def test_aih_ausente_nao_e_falha_tecnica(self):
         p=Pagina([[Linha('9000000000001')]])
         eventos=[]
-        with patch('sisreg_hospital.pesquisar_por_cns'):
+        with patch('sisreg_hospital.pesquisar_por_cns',return_value=None):
             result=consultar_solicitacao_hospitalar(p,'700000000000000',ALVO,
                     observador=lambda *v:eventos.append(v))
         self.assertEqual(result.situacao,'AIH_NAO_LOCALIZADA_PAGINAS')

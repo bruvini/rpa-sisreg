@@ -3,6 +3,7 @@ import sys
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+from contextlib import nullcontext
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'src'))
 from sisreg_hospital import (
     MENU_HOSP, OPCAO_HOSP, CAMPO_CNS, BTN_PESQUISAR,
@@ -15,11 +16,15 @@ class Controle:
         self.attrs=attrs or {};self.valor=None;self.cliques=0;self.hovers=0
     def get_attribute(self,k):return self.attrs.get(k)
     def fill(self,x,**kw):self.valor=x
+    def count(self):return 1
+    def input_value(self,**kw):return self.valor
     def click(self,**kw):self.cliques+=1
     def hover(self,**kw):self.hovers+=1
 
 class Quadro:
     url='https://sisregiii.saude.gov.br/cgi-bin/cons_aih'
+    def expect_navigation(self,**kw):return nullcontext()
+    def locator(self,selector):return self.cns
 
 class TestesPesquisaHospitalar(unittest.TestCase):
     def test_selectors_correspondem_ao_html_fornecido(self):
@@ -34,6 +39,7 @@ class TestesPesquisaHospitalar(unittest.TestCase):
     def test_pesquisa_prepara_cns_e_clica_botao(self):
         pg=Quadro()
         cns=Controle({'name':'cns'})
+        pg.cns=cns
         enviar=Controle({'name':'enviar','type':'button'})
         def achar(p,sel,**kw):
             if sel==CAMPO_CNS:return pg,cns

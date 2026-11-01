@@ -123,7 +123,20 @@ def pesquisar_por_cns(pagina, cns: str):
     origem_autorizada(frame)
     campo.fill(cns, timeout=8000)
     origem_autorizada(frame)
-    botao.click(timeout=14000, no_wait_after=True)
+    try:
+        # O SISREG envia o formulário por POST e recarrega o mesmo frame.
+        # O preenchimento do campo, por si só, não comprova resposta nova.
+        with frame.expect_navigation(wait_until='domcontentloaded',timeout=25000):
+            botao.click(timeout=14000, no_wait_after=True)
+        origem_autorizada(frame)
+        campo_atual=frame.locator(CAMPO_CNS)
+        if campo_atual.count()!=1 or campo_atual.input_value(timeout=5000).strip()!=cns:
+            raise NavegacaoInesperada('Resposta da pesquisa não confirmou o CNS consultado.')
+    except NavegacaoInesperada:
+        raise
+    except Exception as exc:
+        raise NavegacaoInesperada('O carregamento da pesquisa hospitalar não foi confirmado.') from exc
+    return frame
 
 def _ler_tabela_de_resultados(pagina):
     """Le somente linhas selecionaveis da tabela RESULTADOS DA PESQUISA.
@@ -186,6 +199,42 @@ def _link_proxima_pagina(frame):
     except Exception as exc:
         raise NavegacaoInesperada('Nao foi possivel validar o paginador.') from exc
 
+def _metadados_resultados(frame):
+    """Confere número da página e quantidade anunciada sem registrar dados pessoais."""
+    try:
+        titulos=frame.locator(CABECALHO_RESULTADOS).filter(has_text=re.compile('RESULTADOS DA PESQUISA',re.I))
+        if titulos.count()!=1:
+            raise NavegacaoInesperada('Cabeçalho de resultados não confirmado.')
+        titulo=titulos.inner_text(timeout=4000)
+        match=re.search(r'RESULTADOS\s+DA\s+PESQUISA\s*\(\s*(\d+)\s*\)',titulo,re.I)
+        if not match:
+            raise NavegacaoInesperada('Quantidade de resultados não confirmada.')
+        total=int(match.group(1))
+        raw=frame.locator(LINHAS_RESULTADOS).count()
+        paginador=frame.locator('input[name="txtPagina"]')
+        if paginador.count()==0:
+            return total,raw,None,None
+        if paginador.count()!=1:
+            raise NavegacaoInesperada('Paginador ambíguo.')
+        atual=int(paginador.input_value(timeout=4000).strip())
+        texto=paginador.locator('xpath=..').inner_text(timeout=4000)
+        final=re.search(r'\bde\s+(\d+)\b',texto,re.I)
+        if not final or not 1<=atual<=int(final.group(1)):
+            raise NavegacaoInesperada('Página atual ou total de páginas não confirmado.')
+        return total,raw,atual,int(final.group(1))
+    except NavegacaoInesperada:
+        raise
+    except Exception as exc:
+        raise FalhaLeituraTabela('Não foi possível validar a paginação ou a quantidade de resultados.') from exc
+
+def _sem_registros_visivel(frame):
+    """Somente a mensagem institucional exata, na resposta já confirmada."""
+    try:
+        mensagem=frame.get_by_text(re.compile(r'^\s*Nenhum registro encontrado\.\s*$',re.I),exact=True)
+        return any(mensagem.nth(i).is_visible(timeout=1500) for i in range(min(mensagem.count(),5)))
+    except Exception:
+        return False
+
 def selecionar_linha_aih(pagina, aih: str, espera_ms: int = 15000, observador=None, cancelar=None):
     """Busca AIH exata em TODAS as páginas acessíveis de resultados.
 
@@ -204,15 +253,30 @@ def selecionar_linha_aih(pagina, aih: str, espera_ms: int = 15000, observador=No
         frame, linhas, assinatura = _ler_tabela_de_resultados(pagina)
         if linhas:
             break
+        for quadro in _quadros_oficiais(pagina):
+            if _sem_registros_visivel(quadro):
+                raise AIHNaoEncontrada('Pesquisa concluída sem solicitações para o CNS informado.')
+            try:
+                total,raw,atual,ultima=_metadados_resultados(quadro)
+            except NavegacaoInesperada:
+                continue
+            if total==0 and raw==0:
+                raise AIHNaoEncontrada('Pesquisa concluída sem solicitações para o CNS informado.')
         time.sleep(.35)
     if not linhas:
         raise NavegacaoInesperada('Tabela de resultados não disponível; busca inconclusiva.')
     visitadas = set()
     for numero_pagina in range(1, MAX_PAGINAS_RESULTADO + 1):
         _verificar_interrupcao(cancelar)
-        if assinatura in visitadas:
+        total,raw,atual,ultima=_metadados_resultados(frame)
+        if raw != len(linhas) or total < raw:
+            raise FalhaLeituraTabela('Resultados incompletos ou linhas fora do formato esperado.')
+        if numero_pagina==1 and atual is not None and atual!=1:
+            raise NavegacaoInesperada('A pesquisa não iniciou na primeira página; busca inconclusiva.')
+        identificador=(atual,assinatura)
+        if identificador in visitadas:
             raise NavegacaoInesperada('Paginação repetida; não foi possível concluir a busca.')
-        visitadas.add(assinatura)
+        visitadas.add(identificador)
         encontrados = []
         for tr, textos in linhas:
             if len(textos)==7 and normalizar_aih(textos[5]) == procurada:
@@ -231,24 +295,28 @@ def selecionar_linha_aih(pagina, aih: str, espera_ms: int = 15000, observador=No
             observador('PAGINA_RESULTADOS','OK',0.0,'NENHUM')
         proxima = _link_proxima_pagina(frame)
         if proxima is None:
+            if (atual is not None and atual < ultima) or (atual is None and total > raw):
+                raise NavegacaoInesperada('Última página não foi comprovada; busca inconclusiva.')
             raise AIHNaoEncontrada('AIH não encontrada nas páginas de resultados consultadas.')
         try:
             origem_autorizada(frame)
-            proxima.click(timeout=12000,no_wait_after=True)
+            acao=proxima.get_attribute('onclick') or ''
+            destino=re.match(r'^\s*exibirPagina\(\s*(\d+)\s*,\s*(\d+)\s*\)',acao)
+            if not destino or atual is None or int(destino.group(1))+1!=atual+1 or int(destino.group(2))!=ultima:
+                raise NavegacaoInesperada('Destino da próxima página não corresponde ao paginador.')
+            with frame.expect_navigation(wait_until='domcontentloaded',timeout=25000):
+                proxima.click(timeout=12000,no_wait_after=True)
+            origem_autorizada(frame)
         except Exception as exc:
             raise NavegacaoInesperada('Não foi possível avançar a página de resultados.') from exc
-        limite = time.monotonic() + 12
-        atualizada = False
-        while time.monotonic() < limite:
-            _verificar_interrupcao(cancelar)
-            novo_frame, novas_linhas, nova_assinatura = _ler_tabela_de_resultados(pagina)
-            if novas_linhas and nova_assinatura != assinatura:
-                frame, linhas, assinatura = novo_frame, novas_linhas, nova_assinatura
-                atualizada = True
-                break
-            time.sleep(.3)
-        if not atualizada:
+        _verificar_interrupcao(cancelar)
+        novo_frame, novas_linhas, nova_assinatura = _ler_tabela_de_resultados(frame)
+        if novo_frame is None or not novas_linhas:
             raise NavegacaoInesperada('Página seguinte não foi confirmada; busca inconclusiva.')
+        novo_total,novo_raw,nova_atual,nova_ultima=_metadados_resultados(novo_frame)
+        if nova_atual!=atual+1 or nova_ultima!=ultima or novo_total!=total:
+            raise NavegacaoInesperada('Avanço do paginador não foi confirmado; busca inconclusiva.')
+        frame, linhas, assinatura = novo_frame, novas_linhas, nova_assinatura
     raise NavegacaoInesperada('Limite de páginas alcançado; busca inconclusiva.')
 
 
@@ -439,12 +507,13 @@ def obter_detalhes(pagina, aih: str, procedimento_hospital: str = '',
 def consultar_solicitacao_hospitalar(pagina, cns: str, aih: str,
                                    procedimento: str = '', observador=None, cancelar=None) -> ResultadoHospital:
     """Consulta por etapas, com telemetria restrita a códigos SEM dados de pacientes."""
+    quadro_pesquisa = None
     for acao, funcao in (
         ('BUSCA_HOSPITALAR', lambda: pesquisar_por_cns(pagina, cns)),
         ('AIH_EXATA', lambda: selecionar_linha_aih(
-            pagina, aih, observador=observador, cancelar=cancelar)
+            quadro_pesquisa or pagina, aih, observador=observador, cancelar=cancelar)
             if cancelar is not None else selecionar_linha_aih(
-                pagina, aih, observador=observador)),
+                quadro_pesquisa or pagina, aih, observador=observador)),
         ('LEITURA_FICHA', lambda: obter_detalhes(
             pagina, aih, procedimento, cancelar=cancelar)
             if cancelar is not None else obter_detalhes(pagina, aih, procedimento))):
@@ -452,6 +521,8 @@ def consultar_solicitacao_hospitalar(pagina, cns: str, aih: str,
         inicio = time.perf_counter()
         try:
             resultado = funcao()
+            if acao == 'BUSCA_HOSPITALAR':
+                quadro_pesquisa = resultado
         except AIHNaoEncontrada:
             resultado = ResultadoHospital('AIH_NAO_LOCALIZADA_PAGINAS',
                 'AIH não encontrada após percorrer as páginas disponíveis; confirmar em consulta oficial.')

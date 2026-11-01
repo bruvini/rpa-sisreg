@@ -429,6 +429,10 @@ class Aplicativo:
                            values=('Por pesquisar','Falhas técnicas','AIHs não encontradas','Divergências','Todos'))
         filtro.pack(side='left',padx=(0,10))
         filtro.bind('<<ComboboxSelected>>',lambda _e:self._aplicar_filtro_hospital())
+        ttk.Button(ferramentas,text='Selecionar todos do filtro',
+                   command=self._selecionar_filtro_hospital).pack(side='left',padx=(0,6))
+        ttk.Button(ferramentas,text='Limpar seleção',
+                   command=lambda:self.tabela_hospital.selection_remove(self.tabela_hospital.selection())).pack(side='left',padx=(0,6))
         ttk.Button(ferramentas,text='Pesquisar selecionados novamente',
                    command=self._repetir_hospital_selecionados).pack(side='left')
         self.progresso_hospital=tk.StringVar(value='Aguardando conclusão da etapa 2 e autorização para consultar.')
@@ -586,6 +590,16 @@ class Aplicativo:
         filtro=self.filtro_hospital.get()
         for i in range(len(self.sessao.registros)):
             self._atualizar_linha_hospital(i)
+
+    def _selecionar_filtro_hospital(self):
+        itens=self.tabela_hospital.get_children()
+        selecionaveis=[iid for iid in itens
+            if cns_formato(self.sessao.registros[int(iid)].cns)
+            and self.sessao.registros[int(iid)].aih and self.sessao.registros[int(iid)].nome
+            and self._grupo_hospital(self.sessao.registros[int(iid)]) in
+                ('Por pesquisar','Falhas técnicas','AIHs não encontradas','Divergências')]
+        self.tabela_hospital.selection_set(selecionaveis)
+        self.status.set(f'{len(selecionaveis)} registros do filtro selecionados para pesquisa.')
 
     def _repetir_hospital_selecionados(self):
         visiveis=set(self.tabela_hospital.get_children())
