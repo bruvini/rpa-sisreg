@@ -41,9 +41,9 @@ def ficha_hospitalar_completa(registro) -> bool:
     anterior=(getattr(registro,'situacao_anterior','') or '').strip()
     procedimento=(getattr(registro,'comparacao_anterior','') or '').strip()
     return (cns_formato(registro.cns) and bool(registro.carater) and bool(registro.autorizador)
-            and procedimento in ('Compatível','Divergente')
+            and procedimento in ('Compatível','Divergente','Compatível por troca aprovada')
             and anterior in ('Consulta sem divergências', 'Dados divergentes no SISREG',
-                             'Procedimento divergente — revisão fiscal'))
+                             'Procedimento divergente — revisão fiscal','Compatível por troca aprovada'))
 
 
 def candidato_hospitalar(registro) -> bool:
@@ -53,11 +53,15 @@ def candidato_hospitalar(registro) -> bool:
     if registro.situacao.startswith(('CNS_CONFLITO','CPF_CONFLITANTE','ESPELHOS_CONFLITANTES')):
         return False
     if getattr(registro, 'consulta_hospitalar', '') in (
-            'FICHA_CONFERIDA','PROCEDIMENTO_DIVERGENTE','AIH_NAO_LOCALIZADA_PAGINAS'):
+            'FICHA_CONFERIDA','PROCEDIMENTO_DIVERGENTE','AIH_NAO_LOCALIZADA_PAGINAS',
+            'AIH_NAO_COMPROVADA_RESULTADOS','PROCEDIMENTO_NAO_CONFIRMADO_TROCAS'):
         return False
     # A busca paginada esgotada é caso para fiscalização, não nova pesquisa
     # automática a cada login. Paginação quebrada permanece recuperável.
     if getattr(registro, 'situacao_anterior', '') == (
             'AIH não encontrada após pesquisar todas as páginas — revisar'):
+        return False
+    if getattr(registro,'situacao_anterior','') in (
+            'AIH não confirmada — revisão necessária','Trocas de procedimento ambíguas — revisar'):
         return False
     return not ficha_hospitalar_completa(registro)

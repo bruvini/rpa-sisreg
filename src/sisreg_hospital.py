@@ -29,6 +29,9 @@ MAX_PAGINAS_RESULTADO = 100
 class AIHNaoEncontrada(Exception):
     """Busca completa nas páginas disponíveis; não comprova inexistência no SISREG."""
 
+class AIHNaoConfirmada(Exception):
+    """Busca concluída com números de AIH indisponíveis para comparação."""
+
 class FalhaLeituraTabela(NavegacaoInesperada):
     pass
 
@@ -45,6 +48,17 @@ class ResultadoHospital:
     autorizador: str = ''
     procedimento: str = ''
     solicitacao: str = ''
+    procedimento_original: str = ''
+    origem_procedimento: str = 'inicial'
+
+def _aih_do_resultado(texto):
+    """Uma máscara, mesmo parcial, nunca comprova identidade."""
+    return normalizar_aih(texto) if '*' not in texto else ''
+
+
+def _aih_comparavel_ou_mascarada(texto):
+    return (bool(_aih_do_resultado(texto)) or not texto.strip()
+            or ('*' in texto and bool(re.fullmatch(r'[\d*\s.\-/]+',texto))))
 
 
 def obter_carater(texto: str) -> str:
@@ -156,7 +170,7 @@ def _ler_tabela_de_resultados(pagina):
                 for dado in dados:
                     textos = tuple(dado['textos'])
                     if (len(textos) == 7 and
-                            normalizar_aih(textos[5]) and
+                            _aih_comparavel_ou_mascarada(textos[5]) and
                             re.fullmatch(r"\s*mostrarFicha\(['\"]\d+['\"]\)\s*;?\s*",
                                          dado['acao'])):
                         linhas.append((trs.nth(dado['indice']), textos))
@@ -167,7 +181,7 @@ def _ler_tabela_de_resultados(pagina):
                     td = tr.locator('td')
                     textos = tuple(v.strip() for v in td.all_inner_texts())
                     acao = tr.get_attribute('onclick') if hasattr(tr,'get_attribute') else "mostrarFicha('1')"
-                    if (len(textos)==7 and normalizar_aih(textos[5]) and
+                    if (len(textos)==7 and _aih_comparavel_ou_mascarada(textos[5]) and
                             re.fullmatch(r"\s*mostrarFicha\(['\"]\d+['\"]\)\s*;?\s*",acao or '')):
                         linhas.append((tr,textos))
             if linhas:
@@ -266,6 +280,7 @@ def selecionar_linha_aih(pagina, aih: str, espera_ms: int = 15000, observador=No
     if not linhas:
         raise NavegacaoInesperada('Tabela de resultados não disponível; busca inconclusiva.')
     visitadas = set()
+    aihs_indisponiveis=False
     for numero_pagina in range(1, MAX_PAGINAS_RESULTADO + 1):
         _verificar_interrupcao(cancelar)
         total,raw,atual,ultima=_metadados_resultados(frame)
@@ -277,9 +292,10 @@ def selecionar_linha_aih(pagina, aih: str, espera_ms: int = 15000, observador=No
         if identificador in visitadas:
             raise NavegacaoInesperada('Paginação repetida; não foi possível concluir a busca.')
         visitadas.add(identificador)
+        aihs_indisponiveis |= any(not _aih_do_resultado(textos[5]) for _,textos in linhas)
         encontrados = []
         for tr, textos in linhas:
-            if len(textos)==7 and normalizar_aih(textos[5]) == procurada:
+            if len(textos)==7 and _aih_do_resultado(textos[5]) == procurada:
                 encontrados.append(tr)
         if len(encontrados) > 1:
             raise NavegacaoInesperada('AIH repetida na página; não foi aberta automaticamente.')
@@ -297,6 +313,8 @@ def selecionar_linha_aih(pagina, aih: str, espera_ms: int = 15000, observador=No
         if proxima is None:
             if (atual is not None and atual < ultima) or (atual is None and total > raw):
                 raise NavegacaoInesperada('Última página não foi comprovada; busca inconclusiva.')
+            if aihs_indisponiveis:
+                raise AIHNaoConfirmada('Há AIHs mascaradas ou ausentes nas páginas consultadas.')
             raise AIHNaoEncontrada('AIH não encontrada nas páginas de resultados consultadas.')
         try:
             origem_autorizada(frame)
@@ -448,6 +466,56 @@ def _campos_por_rotulo(frame):
     except Exception as exc:
         raise FalhaLeituraFicha('Falha técnica na leitura da ficha hospitalar.') from exc
 
+def _extrair_trocas_aprovadas(linhas):
+    """Lê exclusivamente a seção estruturada; retorna código único e ambiguidade."""
+    secoes=sum(linha.get('secao',False) and
+               [_normalizar_rotulo(v) for v in linha.get('celulas',[])]==['TROCA DE PROCEDIMENTOS']
+               for linha in linhas)
+    if secoes>1:
+        return '',True
+    dentro=False;cabecalho=None;codigos=set();invalida=False
+    for linha in linhas:
+        celulas=linha.get('celulas',[])
+        rotulos=[_normalizar_rotulo(v) for v in celulas]
+        if linha.get('secao'):
+            if dentro:
+                return (next(iter(codigos)) if len(codigos)==1 else '', invalida or len(codigos)>1 or cabecalho is None)
+            if rotulos==['TROCA DE PROCEDIMENTOS']:
+                dentro=True
+            continue
+        if not dentro:
+            continue
+        if 'PROCEDIMENTO' in rotulos and 'STATUS' in rotulos:
+            if rotulos.count('PROCEDIMENTO')!=1 or rotulos.count('STATUS')!=1:
+                invalida=True
+            cabecalho=(rotulos.index('PROCEDIMENTO'),rotulos.index('STATUS'))
+            continue
+        if cabecalho is None:
+            if any(rotulos): invalida=True
+            continue
+        proc,status=cabecalho
+        if max(proc,status)>=len(celulas):
+            if any(rotulos): invalida=True
+            continue
+        if rotulos[status]=='APROVADA':
+            codigo=obter_procedimento(celulas[proc])
+            if codigo: codigos.add(codigo)
+            else: invalida=True
+    return (next(iter(codigos)) if len(codigos)==1 else '',
+            dentro and (invalida or len(codigos)>1 or cabecalho is None))
+
+def _trocas_por_rotulo(frame):
+    try:
+        linhas=frame.locator('#fichaInternacao > table > tbody > tr').evaluate_all("""rows => rows.slice(0,751).map(tr => ({
+          secao:Array.from(tr.children).some(el=>el.classList.contains('td_titulo_tabela')),
+          celulas:Array.from(tr.children).filter(el=>el.tagName==='TD').map(el=>(el.innerText||'').trim())
+        }))""")
+        if len(linhas)>750:
+            raise FalhaLeituraFicha('Ficha excedeu o limite de leitura das trocas de procedimento.')
+        return _extrair_trocas_aprovadas(linhas)
+    except Exception as exc:
+        raise FalhaLeituraFicha('Falha na leitura das trocas de procedimento.') from exc
+
 
 def _ler_tres_campos(frame, cancelar=None, espera_ms=8500):
     """Aguarda a ficha e valida campos apenas por seus rotulos semanticos."""
@@ -479,6 +547,11 @@ def obter_detalhes(pagina, aih: str, procedimento_hospital: str = '',
         return ResultadoHospital(erro,
                                  'A ficha abriu, mas os três campos não foram validados.')
     carater, solicitacao, procedimento = campos
+    procedimento_original=procedimento
+    troca,ambigua=_trocas_por_rotulo(frame)
+    origem='troca_aprovada' if troca else 'inicial'
+    if troca:
+        procedimento=troca
     # Um carregamento tardio não pode misturar dados da ficha anterior.
     _verificar_interrupcao(cancelar)
     try:
@@ -490,18 +563,23 @@ def obter_detalhes(pagina, aih: str, procedimento_hospital: str = '',
     except Exception:
         return ResultadoHospital('AIH_NAO_COMPROVADA_FICHA',
                                  'A ficha não pôde ser validada ao finalizar a leitura.')
+    if ambigua:
+        return ResultadoHospital('PROCEDIMENTO_NAO_CONFIRMADO_TROCAS',
+            'Trocas aprovadas conflitantes ou incompletas; revisão necessária.',
+            procedimento_original=procedimento_original)
     esperado = digitos(procedimento_hospital)
     if len(esperado) != 10:
         return ResultadoHospital('PROCEDIMENTO_NAO_CONFIRMADO',
                                  'Procedimento do hospital indisponível; comparação pendente.',
-                                 carater, '', procedimento, solicitacao)
+                                  carater, '', procedimento, solicitacao,procedimento_original,origem)
     if esperado != procedimento:
         return ResultadoHospital('PROCEDIMENTO_DIVERGENTE',
                                  'O procedimento da ficha difere do informado pelo hospital.',
-                                 carater, '', procedimento, solicitacao)
+                                  carater, '', procedimento, solicitacao,procedimento_original,origem)
     return ResultadoHospital('FICHA_CONFERIDA',
-                             'AIH exata e procedimento compatível com o hospital.',
-                             carater, '', procedimento, solicitacao)
+                             ('AIH exata e procedimento compatível por troca aprovada.' if origem=='troca_aprovada'
+                              else 'AIH exata e procedimento compatível com o hospital.'),
+                              carater, '', procedimento, solicitacao,procedimento_original,origem)
 
 
 def consultar_solicitacao_hospitalar(pagina, cns: str, aih: str,
@@ -529,6 +607,11 @@ def consultar_solicitacao_hospitalar(pagina, cns: str, aih: str,
             if observador:
                 observador(acao, 'PENDENCIA', time.perf_counter()-inicio, 'AIH_NAO_LOCALIZADA_PAGINAS')
             return resultado
+        except AIHNaoConfirmada:
+            if observador:
+                observador(acao,'PENDENCIA',time.perf_counter()-inicio,'AIH_NAO_CONFIRMADA')
+            return ResultadoHospital('AIH_NAO_COMPROVADA_RESULTADOS',
+                'AIH não confirmada: existem números mascarados ou ausentes nos resultados; revisão necessária.')
         except Exception as exc:
             if observador:
                 observador(acao, 'ERRO', time.perf_counter()-inicio,
@@ -547,6 +630,7 @@ def consultar_solicitacao_hospitalar(pagina, cns: str, aih: str,
                     'CAMPOS_FICHA_NAO_CONFIRMADOS':'SELETOR_NAO_ENCONTRADO',
                     'CAMPOS_FICHA_INCOMPLETOS':'CAMPOS_FICHA_INCOMPLETOS',
                     'PROCEDIMENTO_NAO_CONFIRMADO':'CAMPOS_FICHA_INCOMPLETOS',
+                    'PROCEDIMENTO_NAO_CONFIRMADO_TROCAS':'RESULTADO_AMBIGUO',
                 }.get(resultado.situacao, 'ERRO_NAO_CLASSIFICADO')
             observador(acao, situacao, time.perf_counter()-inicio, categoria)
     return resultado

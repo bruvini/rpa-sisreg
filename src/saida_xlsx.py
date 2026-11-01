@@ -84,13 +84,19 @@ def situacao_final(registro) -> str:
         return 'Dados divergentes do espelho de AIH'
     if situacao == 'DADOS_COLETADOS_SEM_DIVERGENCIA':
         return 'Consulta sem divergências'
+    if situacao == 'DADOS_COLETADOS_TROCA_APROVADA':
+        return 'Compatível por troca aprovada'
+    if situacao == 'PENDENTE_PROCEDIMENTO_NAO_CONFIRMADO_TROCAS':
+        return 'Trocas de procedimento ambíguas — revisar'
+    if situacao == 'PENDENTE_AIH_NAO_COMPROVADA_RESULTADOS':
+        return 'AIH não confirmada — revisão necessária'
     if situacao == 'PENDENTE_PROCEDIMENTO_NAO_CONFIRMADO':
         return 'Procedimento não confirmado — consultar ficha'
     if situacao.startswith('PENDENTE_'):
         motivo = situacao.removeprefix('PENDENTE_')
         if 'PROCEDIMENTO_DIVERGENTE' in motivo:
             return 'Procedimento divergente — revisão fiscal'
-        if any(x in motivo for x in ('CARATER_CONFLITANTE','AUTORIZADOR_CONFLITANTE')):
+        if any(x in motivo for x in ('CARATER_CONFLITANTE','AUTORIZADOR_CONFLITANTE','DADOS_DIVERGENTES')):
             return 'Dados divergentes no SISREG'
         if 'AIH_NAO_LOCALIZADA_PAGINAS' in motivo:
             return 'AIH não encontrada após pesquisar todas as páginas — revisar'
@@ -118,6 +124,9 @@ def situacao_final(registro) -> str:
 
 
 ORIENTACOES_FISCAIS = {
+    'Compatível por troca aprovada':'Código produzido corresponde à troca aprovada na ficha. Conferir os demais campos e manter análise fiscal.',
+    'Trocas de procedimento ambíguas — revisar':'Conferir códigos e aprovações na seção de troca de procedimentos.',
+    'AIH não confirmada — revisão necessária':'Há números de AIH mascarados ou ausentes nos resultados; não foi possível concluir ausência.',
     'Consulta sem divergências': 'Automação não identificou divergência nos campos consultados. Não representa atesto; aplicar o procedimento normal de fiscalização.',
     'AIH não encontrada após pesquisar todas as páginas — revisar': 'A busca percorreu as páginas de resultados disponíveis para o CNS, mas a AIH não apareceu; conferir filtros e competência no SISREG antes de qualquer conclusão fiscal.',
     'Aguardando consulta hospitalar': 'Consulta de internação ainda não executada ou não concluída. Retomar a etapa 3 antes de avaliar a produção.',
@@ -144,11 +153,13 @@ def comparacao_procedimento(registro) -> str:
     """Compara códigos, jamais infere conformidade por ausência de um dos lados."""
     hospital = digitos(str(registro.procedimento or ''))
     sisreg = digitos(str(registro.procedimento_sisreg or ''))
-    if not sisreg and getattr(registro,'comparacao_anterior','') in ('Compatível','Divergente'):
+    if not sisreg and getattr(registro,'comparacao_anterior','') in ('Compatível','Divergente','Compatível por troca aprovada'):
         return registro.comparacao_anterior
     if len(hospital) != 10 or len(sisreg) != 10:
         return 'Não conferido'
-    return 'Compatível' if hospital == sisreg else 'Divergente'
+    if hospital==sisreg:
+        return 'Compatível por troca aprovada' if getattr(registro,'origem_procedimento','inicial')=='troca_aprovada' else 'Compatível'
+    return 'Divergente'
 
 
 def data_br(valor: str):
@@ -196,7 +207,7 @@ def adequar_colunas(ws) -> None:
     # Destacar a origem da informação para impedir interpretação como decisão fiscal.
     from openpyxl.comments import Comment
     ws.cell(1,8).comment=Comment('Classificação automatizada dos campos disponíveis. NÃO constitui atesto fiscal.','RPA SISREG')
-    ws.cell(1,10).comment=Comment('Comparação entre código hospitalar e código apresentado na ficha SISREG.','RPA SISREG')
+    ws.cell(1,10).comment=Comment('Comparação entre código hospitalar e procedimento vigente na ficha SISREG: troca aprovada única, quando houver; caso contrário, procedimento inicial.','RPA SISREG')
     ws.cell(1,7).comment=Comment('Identificador da solicitação/autorização na regra operacional do hospital: obtido da ficha SISREG após confirmação da AIH. A coleta automatizada não constitui atesto.','RPA SISREG')
     larguras={'A':32,'B':20,'C':21,'D':18,'E':19,'F':19,'G':24,'H':43,'I':23,'J':22}
     for col,largura in larguras.items():ws.column_dimensions[col].width=largura
@@ -225,12 +236,12 @@ def escrever_linha(ws, registro) -> None:
     data=data_br(registro.atualizado_em)
     comparacao=comparacao_procedimento(registro)
     valores=(estado,data,comparacao)
-    color={'Consulta sem divergências':'13704A', 'Dados divergentes no SISREG':'9C4319'}
+    color={'Consulta sem divergências':'13704A', 'Compatível por troca aprovada':'13704A', 'Dados divergentes no SISREG':'9C4319'}
     for coluna,valor in enumerate(valores,8):
         cel=ws.cell(registro.linha,coluna)
         cel.value=valor
         cel.font=Font(name='Aptos',size=10,color=color.get(estado,'293D52') if coluna==8 else '293D52',bold=(coluna==8))
-        cel.alignment=Alignment(vertical='center',wrap_text=coluna==8)
+        cel.alignment=Alignment(vertical='center',wrap_text=coluna in (8,10))
         cel.fill=PatternFill('solid',fgColor='F1F7FA' if registro.linha%2==0 else 'FFFFFF')
     # Comentário de orientação sem nova coluna ou dado sensível adicional.
     ws.cell(registro.linha,8).comment=Comment(orientacao_fiscal(estado),'RPA SISREG')

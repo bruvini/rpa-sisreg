@@ -54,6 +54,8 @@ class Registro:
     solicitacao: str = ''
     situacao_anterior: str = ''  # Texto de H da planilha anterior, sem persistência extra.
     comparacao_anterior: str = ''  # Resultado de J já salvo; não supor conformidade por F/G.
+    procedimento_original: str = ''
+    origem_procedimento: str = 'inicial'
 
 
 class SessaoPlanilha:
@@ -110,10 +112,12 @@ class SessaoPlanilha:
                     # não precisa repetir consultas hospitalares completas.
                     from progresso import ficha_hospitalar_completa
                     if ficha_hospitalar_completa(r):
-                        r.consulta_hospitalar = ('FICHA_CONFERIDA' if
-                            r.comparacao_anterior == 'Compatível' else 'PROCEDIMENTO_DIVERGENTE')
-                        r.situacao = ('DADOS_COLETADOS_SEM_DIVERGENCIA' if
-                            r.comparacao_anterior == 'Compatível' else 'PENDENTE_PROCEDIMENTO_DIVERGENTE')
+                        compativel=r.comparacao_anterior in ('Compatível','Compatível por troca aprovada')
+                        r.consulta_hospitalar = 'FICHA_CONFERIDA' if compativel else 'PROCEDIMENTO_DIVERGENTE'
+                        r.origem_procedimento='troca_aprovada' if r.comparacao_anterior=='Compatível por troca aprovada' else 'inicial'
+                        r.situacao = ('PENDENTE_DADOS_DIVERGENTES' if r.situacao_anterior=='Dados divergentes no SISREG' else
+                            'DADOS_COLETADOS_TROCA_APROVADA' if r.origem_procedimento=='troca_aprovada' else
+                            'DADOS_COLETADOS_SEM_DIVERGENCIA' if compativel else 'PENDENTE_PROCEDIMENTO_DIVERGENTE')
                     elif (r.situacao_anterior == 'Consulta sem divergências'
                           and r.carater and r.autorizador):
                         r.situacao = 'PENDENTE_PROCEDIMENTO_NAO_CONFIRMADO'
@@ -275,7 +279,9 @@ class SessaoPlanilha:
         registro.consulta_hospitalar = resultado.situacao
         registro.atualizado_em = datetime.now().isoformat(timespec='seconds')
         registro.procedimento_sisreg = resultado.procedimento or ''
-        if resultado.procedimento:
+        registro.procedimento_original=getattr(resultado,'procedimento_original','')
+        registro.origem_procedimento=getattr(resultado,'origem_procedimento','inicial')
+        if resultado.procedimento or resultado.situacao=='PROCEDIMENTO_NAO_CONFIRMADO_TROCAS':
             # Novo resultado substitui eventual marcação histórica de "Não conferido".
             registro.comparacao_anterior = ''
         # Solicitação é vinculada somente quando há AIH exata e ficha confirmada.
@@ -304,6 +310,7 @@ class SessaoPlanilha:
             registro.autorizador = codigo_ficha
         registro.situacao = ('PENDENTE_PROCEDIMENTO_DIVERGENTE'
                              if resultado.situacao == 'PROCEDIMENTO_DIVERGENTE'
+                             else 'DADOS_COLETADOS_TROCA_APROVADA' if registro.origem_procedimento=='troca_aprovada'
                              else 'DADOS_COLETADOS_SEM_DIVERGENCIA')
         registro.revisado = True
 

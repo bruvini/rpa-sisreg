@@ -194,3 +194,35 @@ class TesteConclusao(unittest.TestCase):
         self.assertEqual(r.consulta_hospitalar,'AIH_NAO_LOCALIZADA_PAGINAS')
         self.assertEqual(situacao_final(r),'AIH não encontrada após pesquisar todas as páginas — revisar')
         self.assertEqual(self.app._grupo_hospital(r),'AIHs não encontradas')
+
+    def test_reconsulta_concluida_passa_a_revisao_quando_troca_e_ambigua(self):
+        r=Registro('PT6',2,'PACIENTE FICTICIO','9000000000123','0408050063',
+                   '11144477735','700000000000001','10','670478410')
+        r.consulta_hospitalar='PROCEDIMENTO_DIVERGENTE';r.procedimento_sisreg='0409040193'
+        r.situacao='PENDENTE_PROCEDIMENTO_DIVERGENTE';r.solicitacao='670478410'
+        self.app.sessao.registros=[r];self.app._indices_concluidos_reconsulta={0}
+        self.app.hospital_previstos=1;self.app.inicio_hospital=time.perf_counter()
+        self.app.eventos=queue.Queue()
+        self.app.eventos.put(('hospital_item',(0,ResultadoHospital('PROCEDIMENTO_NAO_CONFIRMADO_TROCAS'),1.0,1,1)))
+        self.app._ler_eventos()
+        self.assertEqual(r.consulta_hospitalar,'PROCEDIMENTO_NAO_CONFIRMADO_TROCAS')
+        self.assertEqual(r.procedimento_sisreg,'')
+        self.assertEqual(self.app._grupo_hospital(r),'Divergências')
+        self.assertEqual(self.app.acertos_hospital_execucao,0)
+
+    def test_troca_compativel_atualiza_tabela_filtro_e_contagens(self):
+        r=Registro('PT6',2,'PACIENTE FICTICIO','9000000000123','0409040193',
+                   '11144477735','700000000000001','10','670478410')
+        r.consulta_hospitalar='PROCEDIMENTO_DIVERGENTE';r.situacao='PENDENTE_PROCEDIMENTO_DIVERGENTE'
+        self.app.sessao.registros=[r];self.app._indices_concluidos_reconsulta={0}
+        self.app.filtro_hospital.set('Divergências');self.app._atualizar_tabela()
+        self.app._selecionar_filtro_hospital()
+        self.app.hospital_previstos=1;self.app.inicio_hospital=time.perf_counter()
+        resultado=ResultadoHospital('FICHA_CONFERIDA','Troca aprovada','10','','0409040193',
+                    '670478410','0408050063','troca_aprovada')
+        self.app.eventos=queue.Queue();self.app.eventos.put(('hospital_item',(0,resultado,1.0,1,1)))
+        self.app._ler_eventos()
+        self.assertEqual(self.app.acertos_hospital_execucao,1)
+        self.assertIn('Compatível por troca aprovada',self.app.progresso_hospital.get())
+        self.assertEqual(self.app.tabela_hospital.get_children(),())
+        self.assertIn('0 de 0',self.app.resumo_selecao.get())

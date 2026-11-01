@@ -192,7 +192,7 @@ def exportar_pendencias(sessao, destino: Path) -> int:
     for r in sessao.registros:
         estado = str(r.situacao or '')
         # Estado de dados coletados não constitui atesto/decisão fiscal.
-        sem_pendencia = estado in ('SOLICITACAO_HOSPITALAR_CONFERIDA', 'DADOS_COLETADOS_SEM_DIVERGENCIA')
+        sem_pendencia = estado in ('SOLICITACAO_HOSPITALAR_CONFERIDA', 'DADOS_COLETADOS_SEM_DIVERGENCIA','DADOS_COLETADOS_TROCA_APROVADA')
         if sem_pendencia:
             continue
         chave = re.sub('[^A-Z0-9_]', '', estado.upper())[:90] or 'DADOS_INSUFICIENTES'

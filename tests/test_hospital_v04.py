@@ -164,7 +164,8 @@ class TesteFichaHospitalar(unittest.TestCase):
         def loc(page,selector,**kwargs):return page,_TextoLoc(d[selector])
         with patch('sisreg_hospital._encontrar',loc), patch(
                 'sisreg_hospital._campos_por_rotulo',
-                return_value=('10','0004532108','0409040193')):
+                return_value=('10','0004532108','0409040193')), patch(
+                'sisreg_hospital._trocas_por_rotulo',return_value=('',False)):
             r=obter_detalhes(_FichePage(),'9000000000123','0408050063',espera_ficha_ms=25)
         self.assertEqual(r.situacao,'PROCEDIMENTO_DIVERGENTE')
         self.assertEqual(r.carater,'10')

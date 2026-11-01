@@ -199,3 +199,104 @@ class TesteHospitalPlaywrightReal(unittest.TestCase):
         quadro=pesquisar_por_cns(self.page,'700000000000001')
         selecionar_linha_aih(quadro,AIH)
         self.assertEqual(self.page.locator('#detalhe').inner_text(),'FICHA ABERTA')
+
+    def _resultados_com_mascara(self, primeira_exata=False, mascara='*************'):
+        html=HTML.replace('RESULTADOS DA PESQUISA (2)','RESULTADOS DA PESQUISA (4)')
+        original='<td>Eletiva</td><td>${aih}</td><td>APROVADA</td></tr>'
+        html=html.replace(original,original+f'''<tr onclick="mostrarFicha('654321')" class="linha_selecionavel">
+            <td>02.01.2026</td><td>TESTE MASCARADO</td><td>PROC</td><td>CLINICA</td>
+            <td>Eletiva</td><td>{mascara}</td><td>APROVADA</td></tr>''')
+        if primeira_exata:
+            html=html.replace("'900000000000-1'","'900000000012-3'")
+        self.page.route('**/*',lambda route:route.fulfill(
+            status=200,content_type='text/html; charset=utf-8',body=html))
+
+    def test_aih_exata_nao_e_bloqueada_por_outra_mascarada(self):
+        self._resultados_com_mascara(primeira_exata=True)
+        r=consultar_solicitacao_hospitalar(self.page,'700000000000001',AIH,PROC)
+        self.assertEqual(r.situacao,'FICHA_CONFERIDA')
+        self.assertIn('pagina=0',self.page.url)
+
+    def test_mascarada_na_primeira_nao_impede_correspondencia_na_segunda(self):
+        self._resultados_com_mascara()
+        r=consultar_solicitacao_hospitalar(self.page,'700000000000001',AIH,PROC)
+        self.assertEqual(r.situacao,'FICHA_CONFERIDA')
+        self.assertIn('pagina=1',self.page.url)
+
+    def test_mascara_ou_aih_ausente_produz_revisao_apos_todas_as_paginas(self):
+        for mascara in ('*************','','9000000000123*'):
+            with self.subTest(mascara=mascara):
+                self._resultados_com_mascara(mascara=mascara)
+                eventos=[]
+                r=consultar_solicitacao_hospitalar(self.page,'700000000000002',AIH,PROC,
+                    observador=lambda *args:eventos.append(args))
+                self.assertEqual(r.situacao,'AIH_NAO_COMPROVADA_RESULTADOS')
+                self.assertEqual(eventos[-1][3],'AIH_NAO_CONFIRMADA')
+                self.assertIn('pagina=1',self.page.url)
+                self.assertEqual(self.page.locator('#fichaInternacao').count(),0)
+
+    def test_mascara_nao_esconde_falha_real_de_paginacao(self):
+        self._resultados_com_mascara()
+        quadro=pesquisar_por_cns(self.page,'700000000000002')
+        self.page.locator('a:has(img[alt="Proxima"])').evaluate('(e)=>e.remove()')
+        with self.assertRaises(NavegacaoInesperada):
+            selecionar_linha_aih(quadro,AIH)
+
+    def test_linha_estruturalmente_invalida_continua_tecnica(self):
+        self._resultados_com_mascara(primeira_exata=True,mascara='TEXTO INESPERADO')
+        quadro=pesquisar_por_cns(self.page,'700000000000001')
+        with self.assertRaises(FalhaLeituraTabela):
+            selecionar_linha_aih(quadro,AIH)
+
+    def _ficha_com_trocas(self, linhas):
+        tabela='''<tr><td class="td_titulo_tabela" colspan="6">Troca de Procedimentos</td></tr>
+            <tr><td>CID</td><td colspan="2">Procedimento</td><td colspan="2">Solicitante</td><td>Status</td></tr>'''
+        for codigo,status in linhas:
+            tabela+=f'<tr><td>CID TESTE</td><td colspan="2">{codigo} - PROCEDIMENTO TESTE</td><td colspan="2">OPERADOR FICTICIO</td><td>{status}</td></tr>'
+        tabela+='''<tr><td class="td_titulo_tabela" colspan="6">Troca de número(s) AIH</td></tr>
+            <tr><td>CID</td><td>Procedimento</td><td>Solicitante</td><td>Status</td></tr>
+            <tr><td>TESTE</td><td>0409040193</td><td>TESTE</td><td>Aprovada</td></tr>
+            <tr><td class="td_titulo_tabela" colspan="6">Observações gerais</td></tr>
+            <tr><td colspan="6">Troca de Procedimentos: 0409040193 Aprovada</td></tr>'''
+        self.page.evaluate('''html=>{mostrarFicha('123456');
+            document.querySelector('#fichaInternacao tbody').insertAdjacentHTML('beforeend',html);}''',tabela)
+
+    def test_troca_aprovada_substitui_inicial_e_repeticoes_sao_deduplicadas(self):
+        for linhas in ([('0409040193',' Aprovada ')],
+                       [('0409040193','Aprovada'),('0409040193','APROVADA')]):
+            with self.subTest(linhas=linhas):
+                self._ficha_com_trocas(linhas)
+                r=obter_detalhes(self.page,AIH,'0409040193')
+                self.assertEqual((r.situacao,r.procedimento,r.procedimento_original,r.origem_procedimento),
+                    ('FICHA_CONFERIDA','0409040193',PROC,'troca_aprovada'))
+                # O código inicial deixa de ser o vigente depois da troca aprovada.
+                r=obter_detalhes(self.page,AIH,PROC)
+                self.assertEqual(r.situacao,'PROCEDIMENTO_DIVERGENTE')
+
+    def test_so_status_exatamente_aprovada_e_usado(self):
+        self._ficha_com_trocas([('0409040193',s) for s in ('Pendente','Recusada','Não aprovada','Aprovada parcialmente')])
+        r=obter_detalhes(self.page,AIH,PROC)
+        self.assertEqual((r.situacao,r.procedimento,r.origem_procedimento),('FICHA_CONFERIDA',PROC,'inicial'))
+        self.assertEqual(r.procedimento_original,PROC)
+
+    def test_trocas_conflitantes_ou_codigo_invalido_exigem_revisao(self):
+        for linhas in ([('0409040193','Aprovada'),('0408050063','Aprovada')],
+                       [('SEM CODIGO','Aprovada')],
+                       [('0409040193','Aprovada'),('SEM CODIGO','Aprovada')]):
+            with self.subTest(linhas=linhas):
+                self._ficha_com_trocas(linhas)
+                r=obter_detalhes(self.page,AIH,PROC)
+                self.assertEqual(r.situacao,'PROCEDIMENTO_NAO_CONFIRMADO_TROCAS')
+                self.assertEqual((r.procedimento,r.carater,r.solicitacao),('','',''))
+
+    def test_troca_nao_elimina_confirmacao_final_da_aih(self):
+        self._ficha_com_trocas([('0409040193','Aprovada')])
+        from sisreg_hospital import _trocas_por_rotulo
+        def ler_e_trocar_ficha(frame):
+            resposta=_trocas_por_rotulo(frame)
+            self.page.locator('#fichaInternacao b').nth(1).evaluate('(e)=>e.textContent="900000000099-9"')
+            return resposta
+        with patch('sisreg_hospital._trocas_por_rotulo',side_effect=ler_e_trocar_ficha):
+            r=obter_detalhes(self.page,AIH,'0409040193')
+        self.assertEqual(r.situacao,'AIH_NAO_COMPROVADA_FICHA')
+        self.assertEqual(r.procedimento,'')

@@ -39,7 +39,8 @@ class TesteFichaV0710(unittest.TestCase):
             return ficha, Campo(dados[seletor])
         with patch('sisreg_hospital._encontrar', side_effect=localizar), \
              patch('sisreg_hospital._campos_por_rotulo',
-                   return_value=('10','670478410',PROC)):
+                   return_value=('10','670478410',PROC)), \
+             patch('sisreg_hospital._trocas_por_rotulo',return_value=('',False)):
             return obter_detalhes(principal, AIH, proc, espera_ficha_ms=25)
 
     def test_popup_aih_exata(self):

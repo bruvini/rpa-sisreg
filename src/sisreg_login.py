@@ -19,7 +19,8 @@ from tkinter import filedialog, messagebox
 from importlib import resources
 from datetime import datetime
 from sisreg_navigation import (consultar_cadastro, ler_cadastro_contexto, autenticao_ativa, NavegacaoInesperada)
-from aih_extract import ler_espelhos_pdf, cpf_valido, cns_formato
+from aih_extract import ler_espelhos_pdf, cpf_valido, cns_formato, normalizar_aih
+from collections import Counter
 from planilha import SessaoPlanilha
 from retomada import SaudeLote, selecionar_cadastros
 from progresso import resumo_progresso, candidato_hospitalar, ficha_hospitalar_completa
@@ -426,7 +427,7 @@ class Aplicativo:
         ttk.Label(ferramentas,text='Mostrar:').pack(side='left',padx=(0,6))
         self.filtro_hospital=tk.StringVar(value='Por pesquisar')
         filtro=ttk.Combobox(ferramentas,textvariable=self.filtro_hospital,state='readonly',width=25,
-                           values=('Por pesquisar','Falhas técnicas','AIHs não encontradas','Divergências','Todos'))
+                           values=('Por pesquisar','Falhas técnicas','AIHs não encontradas','AIHs não confirmadas','Divergências','Todos'))
         filtro.pack(side='left',padx=(0,10))
         filtro.bind('<<ComboboxSelected>>',lambda _e:self._aplicar_filtro_hospital())
         ttk.Button(ferramentas,text='Selecionar todos do filtro',
@@ -435,6 +436,8 @@ class Aplicativo:
                    command=lambda:self.tabela_hospital.selection_remove(self.tabela_hospital.selection())).pack(side='left',padx=(0,6))
         ttk.Button(ferramentas,text='Pesquisar selecionados novamente',
                    command=self._repetir_hospital_selecionados).pack(side='left')
+        self.resumo_selecao=tk.StringVar(value='Selecione um filtro para revisar os registros aptos à consulta.')
+        ttk.Label(c,textvariable=self.resumo_selecao,wraplength=960).pack(anchor='w',pady=(6,0))
         self.progresso_hospital=tk.StringVar(value='Aguardando conclusão da etapa 2 e autorização para consultar.')
         ttk.Label(c,textvariable=self.progresso_hospital,font=('Segoe UI',11,'bold')).pack(anchor='w',pady=(12,3))
         ttk.Label(c,textvariable=self.resumo_hospital,font=('Segoe UI',10,'bold')).pack(anchor='w',pady=(0,2))
@@ -448,6 +451,7 @@ class Aplicativo:
                        ('carater','Caráter',105),('procedimento','Procedimento',134),
                        ('solicitacao','Solicitação',143),('situacao','Situação',215)]
         self.tabela_hospital=ttk.Treeview(quadro_hosp,columns=[x[0] for x in colunas_hosp],show='headings',height=8)
+        self.tabela_hospital.bind('<<TreeviewSelect>>',lambda _e:self._atualizar_resumo_selecao())
         self._ocultas_hospital=set()
         for chave,titulo,largura in colunas_hosp:
             self.tabela_hospital.heading(chave,text=titulo)
@@ -565,14 +569,20 @@ class Aplicativo:
         anterior=str(getattr(r,'situacao_anterior','') or '')
         consulta=str(getattr(r,'consulta_hospitalar','') or '')
         if consulta:
+            if consulta=='AIH_NAO_COMPROVADA_RESULTADOS':
+                return 'AIHs não confirmadas'
             if consulta=='AIH_NAO_LOCALIZADA_PAGINAS':
                 return 'AIHs não encontradas'
             if consulta in ('FALHA_NAVEGACAO','FICHA_NAO_ABERTA','AIH_NAO_COMPROVADA_FICHA',
-                            'CAMPOS_FICHA_INCOMPLETOS','CAMPOS_FICHA_NAO_CONFIRMADOS'):
+                            'CAMPOS_FICHA_INCOMPLETOS','CAMPOS_FICHA_NAO_CONFIRMADOS','PROCEDIMENTO_NAO_CONFIRMADO'):
                 return 'Falhas técnicas'
             if consulta=='PROCEDIMENTO_DIVERGENTE' or 'DIVERGENTE' in atual or 'CONFLITANTE' in atual:
                 return 'Divergências'
+            if consulta=='PROCEDIMENTO_NAO_CONFIRMADO_TROCAS':
+                return 'Divergências'
             return 'Outros'
+        if anterior=='AIH não confirmada — revisão necessária':
+            return 'AIHs não confirmadas'
         if 'AIH_NAO_LOCALIZADA' in atual or anterior.startswith('AIH não encontrada após pesquisar'):
             return 'AIHs não encontradas'
         if (any(x in atual for x in ('FALHA_NAVEGACAO','FICHA_NAO_ABERTA','CAMPOS_FICHA_','AIH_NAO_COMPROVADA'))
@@ -580,34 +590,51 @@ class Aplicativo:
                                         'AIH não confirmada na consulta','Consulta não concluída'))):
             return 'Falhas técnicas'
         if 'DIVERGENTE' in atual or 'CONFLITANTE' in atual or anterior in (
-                'Procedimento divergente — revisão fiscal','Dados divergentes na consulta SISREG'):
+                'Procedimento divergente — revisão fiscal','Dados divergentes na consulta SISREG','Trocas de procedimento ambíguas — revisar'):
             return 'Divergências'
         if candidato_hospitalar(r):
             return 'Por pesquisar'
         return 'Outros'
 
     def _aplicar_filtro_hospital(self):
-        filtro=self.filtro_hospital.get()
         for i in range(len(self.sessao.registros)):
             self._atualizar_linha_hospital(i)
+        self._atualizar_resumo_selecao()
 
     def _selecionar_filtro_hospital(self):
         itens=self.tabela_hospital.get_children()
         selecionaveis=[iid for iid in itens
-            if cns_formato(self.sessao.registros[int(iid)].cns)
-            and self.sessao.registros[int(iid)].aih and self.sessao.registros[int(iid)].nome
-            and self._grupo_hospital(self.sessao.registros[int(iid)]) in
-                ('Por pesquisar','Falhas técnicas','AIHs não encontradas','Divergências')]
+            if not self._motivo_bloqueio_hospital(self.sessao.registros[int(iid)])]
         self.tabela_hospital.selection_set(selecionaveis)
-        self.status.set(f'{len(selecionaveis)} registros do filtro selecionados para pesquisa.')
+        self._atualizar_resumo_selecao()
+        self.status.set(self.resumo_selecao.get())
+
+    def _atualizar_resumo_selecao(self):
+        itens=self.tabela_hospital.get_children()
+        motivos={iid:self._motivo_bloqueio_hospital(self.sessao.registros[int(iid)]) for iid in itens}
+        selecionados=set(self.tabela_hospital.selection())
+        aptos=sum(not motivo for motivo in motivos.values())
+        quantidade=sum(iid in selecionados and not motivo for iid,motivo in motivos.items())
+        bloqueios=Counter(motivo for motivo in motivos.values() if motivo)
+        texto=f'{quantidade} de {len(itens)} registros selecionados · {aptos} aptos'
+        if bloqueios:
+            texto+=' · bloqueados: '+ '; '.join(f'{motivo}: {n}' for motivo,n in sorted(bloqueios.items()))
+        self.resumo_selecao.set(texto)
+
+    def _motivo_bloqueio_hospital(self,r):
+        if not r.cns: return 'CNS ausente'
+        if not cns_formato(r.cns): return 'CNS inválido'
+        if not r.aih: return 'AIH ausente'
+        if not normalizar_aih(r.aih): return 'AIH inválida'
+        if not str(r.nome or '').strip(): return 'Nome ausente'
+        if self._grupo_hospital(r) not in ('Por pesquisar','Falhas técnicas','AIHs não encontradas','AIHs não confirmadas','Divergências'):
+            return 'Resultado já concluído'
+        return ''
 
     def _repetir_hospital_selecionados(self):
         visiveis=set(self.tabela_hospital.get_children())
         indices=[int(i) for i in self.tabela_hospital.selection()
-                 if i in visiveis and cns_formato(self.sessao.registros[int(i)].cns)
-                 and self.sessao.registros[int(i)].aih and self.sessao.registros[int(i)].nome
-                 and self._grupo_hospital(self.sessao.registros[int(i)]) in
-                     ('Por pesquisar','Falhas técnicas','AIHs não encontradas','Divergências')]
+                 if i in visiveis and not self._motivo_bloqueio_hospital(self.sessao.registros[int(i)])]
         if not indices:
             self.status.set('Selecione uma ou mais consultas por pesquisar ou pendências na tabela.')
             return
@@ -1032,6 +1059,8 @@ class Aplicativo:
                                 'CAMPOS_FICHA_INCOMPLETOS':'CAMPOS_FICHA_INCOMPLETOS',
                                 'CAMPOS_FICHA_NAO_CONFIRMADOS':'SELETOR_NAO_ENCONTRADO',
                                 'AIH_NAO_LOCALIZADA_PAGINAS':'AIH_NAO_LOCALIZADA_PAGINAS',
+                                'AIH_NAO_COMPROVADA_RESULTADOS':'AIH_NAO_CONFIRMADA',
+                                'PROCEDIMENTO_NAO_CONFIRMADO_TROCAS':'RESULTADO_AMBIGUO',
                                 'PROCEDIMENTO_NAO_CONFIRMADO':'CAMPOS_FICHA_INCOMPLETOS',
                                 'FALHA_NAVEGACAO':'FALHA_NAVEGACAO'}).get(resultado.situacao,
                                 'ERRO_NAO_CLASSIFICADO' if falha else 'NENHUM')
@@ -1241,6 +1270,7 @@ class Aplicativo:
             return
         candidatos=([i for i,r in enumerate(self.sessao.registros) if candidato_hospitalar(r)]
                     if selecionados is None else list(dict.fromkeys(selecionados)))
+        candidatos=[i for i in candidatos if not self._motivo_bloqueio_hospital(self.sessao.registros[i])]
         self.hospital_universo=len(self.sessao.registros)
         selecionados_set=set(candidatos)
         self.hospital_aproveitados=sum(ficha_hospitalar_completa(r) for i,r in enumerate(self.sessao.registros) if i not in selecionados_set)
@@ -1467,10 +1497,11 @@ class Aplicativo:
                     if resultado.situacao=='FALHA_NAVEGACAO': self.falhas_hospital+=1
                     reg=self.sessao.registros[idx]
                     preservar=(idx in getattr(self,'_indices_concluidos_reconsulta',set()) and
-                               resultado.situacao not in ('FICHA_CONFERIDA','PROCEDIMENTO_DIVERGENTE'))
+                               resultado.situacao not in ('FICHA_CONFERIDA','PROCEDIMENTO_DIVERGENTE',
+                                   'PROCEDIMENTO_NAO_CONFIRMADO_TROCAS','AIH_NAO_COMPROVADA_RESULTADOS'))
                     if not preservar:
                         self.sessao.registrar_hospital(reg,resultado,duracao)
-                    sem_divergencia=(not preservar and reg.situacao=='DADOS_COLETADOS_SEM_DIVERGENCIA')
+                    sem_divergencia=(not preservar and reg.situacao in ('DADOS_COLETADOS_SEM_DIVERGENCIA','DADOS_COLETADOS_TROCA_APROVADA'))
                     if sem_divergencia: self.acertos_hospital+=1
                     self.consultas_hospital_execucao+=1
                     if sem_divergencia: self.acertos_hospital_execucao+=1
@@ -1484,6 +1515,7 @@ class Aplicativo:
                     self._atualizar_linha_visual(idx,self._linha_visual(reg))
                     self._atualizar_linha_visual(idx,self._linha_visual(reg,com_cns=True),True)
                     self._atualizar_linha_hospital(idx)
+                    self._atualizar_resumo_selecao()
                     self.resumo_hospital.set(f'Nesta execução: {self.consultas_hospital_execucao} consultas · '
                         f'sem divergência: {self.acertos_hospital_execucao} · '
                         f'pendências: {self.consultas_hospital_execucao-self.acertos_hospital_execucao} · '

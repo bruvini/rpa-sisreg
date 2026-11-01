@@ -18,7 +18,7 @@ class Pagina:
     url='https://sisregiii.saude.gov.br/cgi-bin/index'
 
 class TesteSolicitacao(unittest.TestCase):
-    def test_versao(self):self.assertEqual(APP_VERSION,'0.7.19')
+    def test_versao(self):self.assertEqual(APP_VERSION,'0.7.20')
     def test_ficha_separa_numero_solicitacao_de_autorizador(self):
         valores={
           '#fichaInternacao':'Código Solicitação 670478410; Número AIH 900000000012-3',
@@ -28,7 +28,8 @@ class TesteSolicitacao(unittest.TestCase):
         }
         with patch('sisreg_hospital._encontrar',side_effect=lambda p,s,**k:(p,Texto(valores[s]))), \
              patch('sisreg_hospital._campos_por_rotulo',
-                   return_value=('10','670478410','0408050063')):
+                   return_value=('10','670478410','0408050063')), \
+             patch('sisreg_hospital._trocas_por_rotulo',return_value=('',False)):
             r=obter_detalhes(Pagina(),'9000000000123','0408050063')
         self.assertEqual(r.situacao,'FICHA_CONFERIDA')
         self.assertEqual(r.solicitacao,'670478410')
