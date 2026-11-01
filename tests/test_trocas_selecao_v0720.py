@@ -124,8 +124,10 @@ class TesteSelecaoAptos(unittest.TestCase):
         self.app._selecionar_filtro_hospital()
         self.assertEqual(set(self.app.tabela_hospital.selection()),{'0','6'})
         resumo=self.app.resumo_selecao.get()
-        self.assertIn('2 de 7 registros selecionados',resumo)
-        for motivo in ('CNS ausente','CNS inválido','AIH ausente','AIH inválida','Nome ausente'):
+        self.assertIn('2 de 5 registros selecionados',resumo)
+        self.assertNotIn('1',self.app.tabela_hospital.get_children())
+        self.assertNotIn('2',self.app.tabela_hospital.get_children())
+        for motivo in ('AIH ausente','AIH inválida','Nome ausente'):
             self.assertIn(motivo+': 1',resumo)
         self.app.thread_navegador=SimpleNamespace(is_alive=lambda:True)
         self.app.browser_ready=True;self.app._iniciar_hospital=Mock()

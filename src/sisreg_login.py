@@ -347,7 +347,7 @@ class Aplicativo:
         self.tabela.pack(side='left',fill='both',expand=True);scroll.pack(side='right',fill='y')
         ttk.Label(a,text='Não sobrescrevemos CPFs ou CNS existentes quando houver divergência. '
                   'O processo em lote não exige seleção individual de pacientes.',wraplength=930).pack(anchor='w',pady=(7,0))
-        ttk.Label(b,text='Etapa 2 — Consulta de todos os CPFs válidos no SISREG',
+        ttk.Label(b,text='Etapa 2 — Consultar CPFs válidos ainda sem CNS',
                   font=('Segoe UI',12,'bold')).pack(anchor='w',pady=(0,8))
         fc=ttk.Frame(b);fc.pack(fill='x',pady=(0,7))
         ttk.Label(fc,text='Usuário institucional').grid(row=0,column=0,sticky='w')
@@ -413,7 +413,7 @@ class Aplicativo:
                   wraplength=930).pack(anchor='w',pady=(6,0))
         ttk.Label(c,text='Etapa 3 — Consultar solicitações hospitalares por CNS e AIH',
                   font=('Segoe UI',13,'bold')).pack(anchor='w',pady=(0,10))
-        ttk.Label(c,text='Após os CNS serem preenchidos, o robô pesquisa as solicitações hospitalares do CNS, '
+        ttk.Label(c,text='A fila mostra registros com CNS e consulta hospitalar pendente. O robô pesquisa as solicitações do CNS, '
                   'localiza a AIH exata na tabela e abre a ficha. Só grava caráter e autorizador com '
                   'identificação inequívoca; procedimento divergente fica sinalizado para revisão.',
                   wraplength=920).pack(anchor='w',pady=(0,12))
@@ -546,6 +546,11 @@ class Aplicativo:
     def _atualizar_linha_visual(self, indice, dados, com_cns=False):
         tabela=self.tabela_cns if com_cns else self.tabela
         iid=str(indice)
+        if com_cns:
+            r=self.sessao.registros[indice]
+            if not cpf_valido(r.cpf) or r.cns_origem:
+                if tabela.exists(iid): tabela.delete(iid)
+                return
         if tabela.exists(iid):
             tabela.item(iid,values=dados)
         else:
@@ -657,7 +662,11 @@ class Aplicativo:
         grupo=self._grupo_hospital(self.sessao.registros[indice])
         r=self.sessao.registros[indice]
         recuperavel=(grupo=='Falhas técnicas' and cns_formato(r.cns) and bool(r.aih and r.nome))
-        mostrar=(filtro=='Todos' or grupo==filtro or (filtro=='Por pesquisar' and recuperavel))
+        # Cada aba conserva sua própria fila. Revisões hospitalares completas
+        # continuam acessíveis por filtro; ausência de CNS pertence às etapas anteriores.
+        concluida_anterior=ficha_hospitalar_completa(r) and grupo=='Outros'
+        mostrar=(cns_formato(r.cns) and not concluida_anterior and
+            (filtro=='Todos' or grupo==filtro or (filtro=='Por pesquisar' and recuperavel)))
         if not mostrar:
             self.tabela_hospital.detach(iid)
             self._ocultas_hospital.add(iid)
@@ -808,9 +817,10 @@ class Aplicativo:
         for i,r in enumerate(self.sessao.registros):
             if not r.cpf_origem:
                 self._atualizar_linha_visual(i,self._linha_visual(r))
-            if not r.cns_origem:
+            if cpf_valido(r.cpf) and not r.cns:
                 self._atualizar_linha_visual(i,self._linha_visual(r,com_cns=True),True)
             self._atualizar_linha_hospital(i)
+        self._atualizar_resumo_selecao()
 
     def _cns_totais(self):
         """Progresso acumulado do XLSX, independente do lote e de novo login."""
@@ -835,7 +845,7 @@ class Aplicativo:
         if self.janela_verificacao is None or not self.janela_verificacao.winfo_exists():
             janela=tk.Toplevel(self.root)
             janela.title('RPA SISREG — atendimento necessário')
-            janela.geometry('545x225')
+            janela.geometry('545x285')
             janela.resizable(False,False)
             janela.transient(self.root)
             area=ttk.Frame(janela,padding=18);area.pack(fill='both',expand=True)
@@ -844,6 +854,9 @@ class Aplicativo:
             ttk.Label(area,text='As consultas estão pausadas e os dados já coletados foram preservados. '
                       'Conclua a verificação ou regularize a conexão no navegador oficial. '
                       'Depois clique no botão abaixo.',wraplength=490,justify='left').pack(anchor='w')
+            ttk.Label(area,text='Se o SISREG pedir verificação sem mostrar o desafio, aguarde a disponibilidade '
+                      'do serviço. A confirmação só retoma as consultas quando a sessão for validada.',
+                      wraplength=490,justify='left').pack(anchor='w',pady=(8,0))
             botoes=ttk.Frame(area);botoes.pack(side='bottom',fill='x',pady=(16,0))
             self.btn_modal_confirmar=ttk.Button(botoes,text='Verificar sessão e retomar',
                                                command=self._confirmar_verificacao)
@@ -1294,6 +1307,9 @@ class Aplicativo:
         self.tempo_hospital.set(f'Iniciando · manual projetado: {self._duracao(len(candidatos)*10)} (10s/consulta).')
         for i in candidatos: self._atualizar_linha_hospital(i)
         self.tipo_lote='hospital';self.processando=True
+        self.abas.tab(2,state='normal')
+        self.abas.select(2)
+        self._atualizar_avanco()
         self.persistencia_falhou=False;self.navegacao_falhou=False
         self.parar.clear();self.pausa.clear()
         self.btn_hospital.configure(state='disabled');self.barra_hospital.configure(value=0)
@@ -1513,8 +1529,6 @@ class Aplicativo:
                     if contador%15==0:
                         self._salvar_checkpoint()
                         self._resumir_historico()
-                    self._atualizar_linha_visual(idx,self._linha_visual(reg))
-                    self._atualizar_linha_visual(idx,self._linha_visual(reg,com_cns=True),True)
                     self._atualizar_linha_hospital(idx)
                     self._atualizar_resumo_selecao()
                     self.resumo_hospital.set(f'Nesta execução: {self.consultas_hospital_execucao} consultas · '
@@ -1589,7 +1603,6 @@ class Aplicativo:
                     # Checkpoint a cada 10 linhas, sempre depois da confirmação objetiva.
                     if contador%10==0:
                         self._salvar_checkpoint()
-                    self._atualizar_linha_visual(idx,self._linha_visual(reg))
                     self._atualizar_linha_visual(idx,self._linha_visual(reg,com_cns=True),True)
                     self.barra.configure(value=100*contador/max(total,1))
                     identificados,elegiveis=self._cns_totais()
@@ -1814,12 +1827,14 @@ class Aplicativo:
         ttk.Label(frame,text=rotulo_versao(),foreground='#52677a').pack(anchor='w',pady=(2,12))
         blocos=[
           ('Origem da demanda','Desenvolvida a partir de demanda da equipe de fiscalização contratual, diante do alto volume de conferências manuais de internações.'),
-          ('Processo apoiado','Apoia a conferência das internações informadas pelo prestador, automatizando extração de espelhos e consultas ao SISREG.'),
+          ('Estado da aplicação','Aplicação desktop em validação operacional assistida, com leitura de PDF/XLSX, pesquisa de cadastro e conferência hospitalar em lote. Resultados já foram conferidos em uso autorizado; novas versões e variações do SISREG continuam exigindo homologação local.'),
+          ('Filas de trabalho','Etapa 1: complementa CPFs ausentes no espelho. Etapa 2: consulta CPFs válidos ainda sem CNS. Etapa 3: consulta registros com CNS e ficha pendente. As tabelas mantêm os resultados produzidos durante cada etapa; campos preenchidos em execuções anteriores são aproveitados. A etapa hospitalar abre automaticamente ao iniciar.'),
           ('Dados utilizados','Nome, AIH, CPF, CNS, procedimento e dados administrativos estritamente necessários à conferência.'),
           ('Proteção e rastreabilidade','Os dados de pacientes permanecem nos arquivos institucionais locais. Credenciais não são salvas. Histórico técnico reúne horários, quantidades, versão e hashes, sem dados individuais.'),
-          ('Retomada','As etapas ignoram CPF e CNS já preenchidos e preservam resultados hospitalares completos. O andamento mostra separadamente o total acumulado e a análise desta sessão; pendências técnicas podem ser repetidas.'),
-          ('Conferência e status','A consulta hospitalar lê caráter, código da solicitação e procedimento. Procedimento divergente requer análise fiscal; campo ausente ou ficha não aberta significa consulta incompleta, não irregularidade do paciente.'),
-          ('CAPTCHA e conexão','O SISREG pode exigir verificação humana ou apresentar indisponibilidade. O RPA pausa e preserva resultados; a operadora conclui a verificação no navegador. Não contorna CAPTCHA nem garante execução desassistida.'),
+          ('Retomada e revisão','Resultados hospitalares completos são preservados. A fila padrão mostra consultas por fazer e falhas recuperáveis; filtros específicos permitem revisar e selecionar divergências e AIHs não encontradas ou não confirmadas. Registros sem CNS ficam nas etapas anteriores. A seleção informa a quantidade de aptos e os motivos dos bloqueados.'),
+          ('Conferência hospitalar','Pesquisa a AIH exata em todas as páginas confirmadas e lê caráter, solicitação e procedimento por rótulos. Uma AIH mascarada não bloqueia outra linha; quando impede concluir ausência, o registro fica para revisão. Na seção Troca de Procedimentos, uma aprovação única define o código vigente. Aprovações conflitantes ou inválidas exigem análise humana; observações e histórico da AIH não entram nessa comparação.'),
+          ('Resultados e segurança','Compatível por troca aprovada é registrado na tela e na planilha, sem ocultar divergências nos demais campos. A fonte recebida é preservada; resultados e checkpoints ficam na cópia de trabalho. A automação do navegador roda em processo próprio para permitir interromper e fechar sem manter a janela principal presa.'),
+          ('CAPTCHA e conexão','O SISREG pode exigir verificação humana ou apresentar indisponibilidade, inclusive pedir verificação sem exibir o desafio. O RPA pausa, salva os resultados recebidos e só retoma após confirmação da pessoa e validação da sessão, pelo item ainda pendente. Não resolve CAPTCHA nem garante execução desassistida.'),
           ('Tempo de referência','Tempos manuais são estimativas de 15 s para PDF/AIH e 10 s por consulta SISREG, não produtividade manual aferida. É possível que o SISREG seja mais lento; requisições não são aceleradas para evitar restrições.'),
           ('Responsabilidade do fiscal','Esta ferramenta é um recurso de apoio à conferência. A identificação automática de dados não substitui a análise do fiscal. Divergências, inconsistências e decisões relacionadas ao atesto permanecem sob análise humana.'),
           ('Créditos','Desenvolvimento: Enf. Bruno Vinícius. Coautoria: Joice Correa Gomes e Heloisa Hoffmann.'),
