@@ -29,6 +29,12 @@ MAX_PAGINAS_RESULTADO = 100
 class AIHNaoEncontrada(Exception):
     """Busca completa nas páginas disponíveis; não comprova inexistência no SISREG."""
 
+class FalhaLeituraTabela(NavegacaoInesperada):
+    pass
+
+class FalhaLeituraFicha(NavegacaoInesperada):
+    pass
+
 
 
 @dataclass(frozen=True)
@@ -132,7 +138,7 @@ def _ler_tabela_de_resultados(pagina):
                     indice:i, textos:Array.from(tr.querySelectorAll(':scope > td'))
                         .map(el=>(el.innerText||'').trim()),
                     acao:tr.getAttribute('onclick')||''
-                }))""", timeout=7000)
+                }))""")
                 linhas = []
                 for dado in dados:
                     textos = tuple(dado['textos'])
@@ -155,8 +161,8 @@ def _ler_tabela_de_resultados(pagina):
                 assinatura = hashlib.sha256(
                     repr([textos for _,textos in linhas]).encode('utf-8')).hexdigest()
                 return frame, linhas, assinatura
-        except Exception:
-            continue
+        except Exception as exc:
+            raise FalhaLeituraTabela('Falha técnica na leitura da tabela de resultados.') from exc
     return None, [], None
 
 def _link_proxima_pagina(frame):
@@ -369,10 +375,10 @@ def _campos_por_rotulo(frame):
         linhas = trs.evaluate_all("""rows => rows.slice(0,160).map(tr =>
           Array.from(tr.children).filter(el=>el.tagName==='TD')
             .map(el=>(el.innerText||'').trim())
-        )""", timeout=4000)
+        )""")
         return _extrair_campos_de_linhas(linhas)
-    except Exception:
-        return '', '', ''
+    except Exception as exc:
+        raise FalhaLeituraFicha('Falha técnica na leitura da ficha hospitalar.') from exc
 
 
 def _ler_tres_campos(frame, cancelar=None, espera_ms=8500):
@@ -452,10 +458,12 @@ def consultar_solicitacao_hospitalar(pagina, cns: str, aih: str,
             if observador:
                 observador(acao, 'PENDENCIA', time.perf_counter()-inicio, 'AIH_NAO_LOCALIZADA_PAGINAS')
             return resultado
-        except Exception:
+        except Exception as exc:
             if observador:
                 observador(acao, 'ERRO', time.perf_counter()-inicio,
-                           'SELETOR_NAO_ENCONTRADO')
+                           'FALHA_LEITURA_TABELA' if isinstance(exc, FalhaLeituraTabela)
+                           else 'FALHA_LEITURA_FICHA' if isinstance(exc, FalhaLeituraFicha)
+                           else 'SELETOR_NAO_ENCONTRADO')
             raise
         if observador:
             situacao = 'OK'

@@ -1,6 +1,6 @@
 # RPA SISREG — Conferência automatizada de internações
 
-![Versão](https://img.shields.io/badge/vers%C3%A3o-0.7.15-07436b) ![Python](https://img.shields.io/badge/Python-3.12-3776AB) ![Licença](https://img.shields.io/badge/c%C3%B3digo-MIT-555555)
+![Versão](https://img.shields.io/badge/vers%C3%A3o-0.7.16-07436b) ![Python](https://img.shields.io/badge/Python-3.12-3776AB) ![Licença](https://img.shields.io/badge/c%C3%B3digo-MIT-555555)
 
 > **A máquina executa o trabalho repetitivo; o fiscal analisa as exceções e toma a decisão.**
 
@@ -47,7 +47,7 @@ A planilha hospitalar de entrada e o PDF são **somente leitura**. A cópia enri
 é gerada automaticamente sem apagar o original. Na estação de trabalho, mantenha
 o Excel fechado enquanto o lote é processado.
 
-## Pesquisa hospitalar conforme HTML oficial (v0.7.15)
+## Pesquisa hospitalar conforme HTML oficial (v0.7.16)
 
 - Consulta Hosp > Solicitações: usa o link real de `/cgi-bin/cons_aih`.
 - Busca o CNS no formulário com `input[name="cns"][maxlength="15"]` e aciona o botão `PESQUISAR` na mesma janela interna.
