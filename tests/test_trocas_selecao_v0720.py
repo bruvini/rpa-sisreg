@@ -22,6 +22,20 @@ def registro():
 
 
 class TestePersistenciaTroca(unittest.TestCase):
+    def test_distingue_aih_ausente_e_invalida_na_planilha_carregada(self):
+        from openpyxl import load_workbook
+        with tempfile.TemporaryDirectory() as pasta:
+            caminho=Path(pasta)/'teste.xlsx'
+            shutil.copy2(Path(__file__).parent/'fixtures'/'hospital_sintetico.xlsx',caminho)
+            for valor,motivo in ((None,'AIH ausente'),('123','AIH inválida')):
+                with self.subTest(motivo=motivo):
+                    wb=load_workbook(caminho);ws=wb['PT6']
+                    ws.cell(2,2).value=valor;ws.cell(2,5).value='700000000000001'
+                    wb.save(caminho);wb.close()
+                    s=SessaoPlanilha();s.carregar(caminho)
+                    r=next(r for r in s.registros if r.aba=='PT6' and r.linha==2)
+                    self.assertEqual(Aplicativo.__new__(Aplicativo)._motivo_bloqueio_hospital(r),motivo)
+
     def salvar_e_reabrir(self,carater='',autorizador='',resultado=None):
         from openpyxl import load_workbook
         with tempfile.TemporaryDirectory() as pasta:

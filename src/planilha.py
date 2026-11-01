@@ -56,6 +56,7 @@ class Registro:
     comparacao_anterior: str = ''  # Resultado de J já salvo; não supor conformidade por F/G.
     procedimento_original: str = ''
     origem_procedimento: str = 'inicial'
+    aih_origem: str = ''  # Distingue ausência de formato inválido na seleção.
 
 
 class SessaoPlanilha:
@@ -93,7 +94,8 @@ class SessaoPlanilha:
                                  campos[4], campos[5], campos[6],
                                  cpf_origem=campos[3], cns_origem=campos[4],
                                  situacao_anterior=valor_texto(linha[7]) if len(linha)>7 else '',
-                                 comparacao_anterior=valor_texto(linha[9]) if len(linha)>9 else '')
+                                 comparacao_anterior=valor_texto(linha[9]) if len(linha)>9 else '',
+                                 aih_origem=campos[1])
                     if not aih:
                         r.situacao = 'AIH_FORMATO_INVALIDO'
                         r.detalhe = 'AIH deve ter 13 dígitos. Corrigir na origem.'

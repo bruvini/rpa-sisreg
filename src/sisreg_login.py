@@ -624,8 +624,9 @@ class Aplicativo:
     def _motivo_bloqueio_hospital(self,r):
         if not r.cns: return 'CNS ausente'
         if not cns_formato(r.cns): return 'CNS inválido'
-        if not r.aih: return 'AIH ausente'
-        if not normalizar_aih(r.aih): return 'AIH inválida'
+        aih=r.aih or getattr(r,'aih_origem','')
+        if not str(aih or '').strip(): return 'AIH ausente'
+        if not normalizar_aih(aih): return 'AIH inválida'
         if not str(r.nome or '').strip(): return 'Nome ausente'
         if self._grupo_hospital(r) not in ('Por pesquisar','Falhas técnicas','AIHs não encontradas','AIHs não confirmadas','Divergências'):
             return 'Resultado já concluído'
