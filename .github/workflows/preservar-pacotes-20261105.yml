@@ -1,0 +1,44 @@
+name: Preservar pacotes de 05-11-2026
+on:
+  push:
+    branches: ['manutencao/armazenamento-actions-20261105']
+    paths: ['.github/workflows/preservar-pacotes-20261105.yml']
+permissions:
+  contents: write
+  actions: read
+jobs:
+  preservar:
+    if: github.event.deleted == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Conferir arquivos e guardar na release em rascunho
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          tag=reserva-actions-20261105
+          cat > inventario.tsv <<'DADOS'
+          42	41330451682	13092823826	sha256:508b34b759b6fb9aa300e51e58ccda9c124ca6d6ca9bd9b9d21c920f99717651	5fa881e91b3acbf15444cb9503fbeb013e7d5552	70568429
+          41	41327296753	13091304389	sha256:b926a95a9700b09eb8e91c92c50c5d6e30c737353449c504bfd742a091841a2d	a7ecc9c8af832faed9bc2f363bf77567710a464b	70560816
+          DADOS
+          while read -r numero run id hash commit tamanho; do
+            arquivo="run-$numero-artefato-$id.zip"
+            gh api "repos/$GH_REPO/actions/artifacts/$id/zip" > "$arquivo"
+            echo "${hash#sha256:}  $arquivo" | sha256sum -c -
+            test "$(stat -c %s "$arquivo")" -eq "$tamanho"
+            unzip -tq "$arquivo" >/dev/null
+            pasta="verificar-$id"
+            mkdir "$pasta"
+            unzip -q "$arquivo" -d "$pasta"
+            (cd "$pasta" && sha256sum -c SHA256.txt)
+          done < inventario.tsv
+          gh release create "$tag" --draft --target '5fa881e91b3acbf15444cb9503fbeb013e7d5552' --title 'Reserva de executáveis Windows · 05/11/2026' --notes 'Cópia de preservação. Manter como rascunho de acesso restrito. O inventário informa execução, artefato, SHA-256 do ZIP, commit e tamanho em bytes.' inventario.tsv run-*.zip
+          release_id=$(gh release view "$tag" --json databaseId --jq '.databaseId')
+          gh api "repos/$GH_REPO/releases/$release_id" --jq '.draft == true' | grep -qx true
+          gh api "repos/$GH_REPO/releases/$release_id/assets" > assets.json
+          while read -r numero run id hash commit tamanho; do
+            jq -e --arg nome "run-$numero-artefato-$id.zip" --arg hash "$hash" --argjson tamanho "$tamanho" 'any(.[]; .name == $nome and .digest == $hash and .size == $tamanho and .state == "uploaded")' assets.json >/dev/null
+          done < inventario.tsv
