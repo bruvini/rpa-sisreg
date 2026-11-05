@@ -33,7 +33,8 @@ jobs:
             pasta="verificar-$id"
             mkdir "$pasta"
             unzip -q "$arquivo" -d "$pasta"
-            (cd "$pasta" && sha256sum -c SHA256.txt)
+            digest=$(grep -Eo '[[:xdigit:]]{64}' "$pasta/SHA256.txt")
+            echo "$digest  $pasta/RPA_SISREG.exe" | sha256sum -c -
           done < inventario.tsv
           gh release create "$tag" --draft --target '5fa881e91b3acbf15444cb9503fbeb013e7d5552' --title 'Reserva de executáveis Windows · 05/11/2026' --notes 'Cópia de preservação. Manter como rascunho de acesso restrito. O inventário informa execução, artefato, SHA-256 do ZIP, commit e tamanho em bytes.' inventario.tsv run-*.zip
           release_id=$(gh release view "$tag" --json databaseId --jq '.databaseId')
